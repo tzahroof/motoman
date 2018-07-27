@@ -1,0 +1,27 @@
+stomp/manipulator:
+  group_name: manipulator
+  optimization:
+    num_timesteps: 20
+    num_iterations: 20 #50
+    num_iterations_after_valid: 15
+    num_rollouts: 90
+    max_rollouts: 100 
+    initialization_method: 1 #[1 : LINEAR_INTERPOLATION, 2 : CUBIC_POLYNOMIAL, 3 : MININUM_CONTROL_COST
+    control_cost_weight: 0.0
+  task:
+    noise_generator:
+      - class: stomp_moveit/NormalDistributionSampling
+        stddev: [0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2]
+    cost_functions:
+      - class: stomp_moveit/CollisionCheck
+        check_intermediate_collisions: false
+        kernel_window_percentage: 0.07
+        collision_penalty: 1.0
+        cost_weight: 1.0
+        longest_valid_joint_move: 0.005
+    noisy_filters:
+      - class: stomp_moveit/JointLimits
+        lock_start: True
+        lock_goal: True 
+    update_filters:
+      - class: stomp_moveit/ControlCostProjectionMatrix

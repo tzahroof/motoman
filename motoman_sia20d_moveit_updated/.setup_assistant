@@ -1,0 +1,11 @@
+moveit_setup_assistant_config:
+  URDF:
+    package: motoman_sia20d_support
+    relative_path: urdf/sia20d.xacro
+    xacro_args: "--inorder "
+  SRDF:
+    relative_path: config/motoman_sia20d.srdf
+  CONFIG:
+    author_name: Tariq Zahroof
+    author_email: tzahroof@stanford.edu
+    generated_timestamp: 1532477369
