@@ -268,67 +268,6 @@ int main(int argc, char** argv) {
    // ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    // visual_tools.prompt("Press 'next' in the RvizVisualToolsGui window to start the demo. Make sure to add the button via the Panels menu in the top bar.");
 
-
-  //CREATE WALL
-
-  moveit_msgs::CollisionObject collision_object;
-
-  shape_msgs::SolidPrimitive collision_object_primitive;
-  collision_object_primitive.type = collision_object_primitive.BOX;
-  collision_object_primitive.dimensions.resize(3);
-  collision_object_primitive.dimensions[0] = 0.2;
-  collision_object_primitive.dimensions[1] = 0.4;
-  collision_object_primitive.dimensions[2] = 0.4;
-
-  geometry_msgs::Pose collision_box_pose;
-  collision_box_pose.orientation.w = 1.0;
-  collision_box_pose.position.x = 0.35;
-  collision_box_pose.position.y = 0.1;
-  collision_box_pose.position.z = 0.9;
-
-  collision_object.id = "collision_object";
-  collision_object.primitives.push_back(collision_object_primitive);
-  collision_object.primitive_poses.push_back(collision_box_pose);
-  collision_object.operation = collision_object.ADD;
-  collision_object.header.frame_id = "/base_link";
-
-  //CREATE OBJECT for PICKING UP
-
-  moveit_msgs::CollisionObject pick_object;
-
-  shape_msgs::SolidPrimitive pick_primitive;
-  pick_primitive.type = pick_primitive.BOX;
-  pick_primitive.dimensions.resize(3);
-  pick_primitive.dimensions[0] = 0.035;
-  pick_primitive.dimensions[1] = 0.1;
-  pick_primitive.dimensions[2] = 0.15;
-
-  geometry_msgs::Pose pick_box_pose;
-  pick_box_pose.orientation.w = 1.0;
-  pick_box_pose.position.x = 0.4575;
-  pick_box_pose.position.y = 0.580;
-  pick_box_pose.position.z = 0.075;
-
-  pick_object.id = "pick_object";
-  pick_object.primitives.push_back(pick_primitive);
-  pick_object.primitive_poses.push_back(pick_box_pose);
-  pick_object.operation = pick_object.ADD;
-  pick_object.header.frame_id = "/base_link";
-
-  //Display the wall and the object in RViz
-  moveit_msgs::PlanningScene planning_scene_msg;
-  planning_scene_msg.world.collision_objects.push_back(collision_object);
-  planning_scene_msg.world.collision_objects.push_back(pick_object);
-  planning_scene_msg.is_diff = true;
-  planning_scene_diff_publisher.publish(planning_scene_msg);
-
-
-  //Add the objects to our simulation and planning process
-  planning_scene->processPlanningSceneWorldMsg(planning_scene_msg.world);
-
-
-  ros::Duration(1).sleep();
-
   for(int main_loop_iter = 0; main_loop_iter <max_Iter; main_loop_iter++) { //change number of iterations
 
     // Joint Goal
@@ -342,6 +281,66 @@ int main(int argc, char** argv) {
 
     // Due to the way that FMT* is programmed, it needs an explicit joint goal (the other OMPL planners can infer one from an end-effector pose)
     // BFMT* requires an explicit start state as well
+
+      //CREATE WALL
+
+    moveit_msgs::CollisionObject collision_object;
+
+    shape_msgs::SolidPrimitive collision_object_primitive;
+    collision_object_primitive.type = collision_object_primitive.BOX;
+    collision_object_primitive.dimensions.resize(3);
+    collision_object_primitive.dimensions[0] = 0.2;
+    collision_object_primitive.dimensions[1] = 0.4;
+    collision_object_primitive.dimensions[2] = 0.4;
+
+    geometry_msgs::Pose collision_box_pose;
+    collision_box_pose.orientation.w = 1.0;
+    collision_box_pose.position.x = 0.35;
+    collision_box_pose.position.y = 0.1;
+    collision_box_pose.position.z = 0.9;
+
+    collision_object.id = "collision_object";
+    collision_object.primitives.push_back(collision_object_primitive);
+    collision_object.primitive_poses.push_back(collision_box_pose);
+    collision_object.operation = collision_object.ADD;
+    collision_object.header.frame_id = "/base_link";
+
+    //CREATE OBJECT for PICKING UP
+
+    moveit_msgs::CollisionObject pick_object;
+
+    shape_msgs::SolidPrimitive pick_primitive;
+    pick_primitive.type = pick_primitive.BOX;
+    pick_primitive.dimensions.resize(3);
+    pick_primitive.dimensions[0] = 0.035;
+    pick_primitive.dimensions[1] = 0.1;
+    pick_primitive.dimensions[2] = 0.15;
+
+    geometry_msgs::Pose pick_box_pose;
+    pick_box_pose.orientation.w = 1.0;
+    pick_box_pose.position.x = 0.4575;
+    pick_box_pose.position.y = 0.580;
+    pick_box_pose.position.z = 0.075;
+
+    pick_object.id = "pick_object";
+    pick_object.primitives.push_back(pick_primitive);
+    pick_object.primitive_poses.push_back(pick_box_pose);
+    pick_object.operation = pick_object.ADD;
+    pick_object.header.frame_id = "/base_link";
+
+    //Display the wall and the object in RViz
+    moveit_msgs::PlanningScene planning_scene_msg;
+    planning_scene_msg.world.collision_objects.push_back(collision_object);
+    planning_scene_msg.world.collision_objects.push_back(pick_object);
+    planning_scene_msg.is_diff = true;
+    planning_scene_diff_publisher.publish(planning_scene_msg);
+
+
+    ros::Duration(1).sleep();
+
+
+    //Add the objects to our simulation and planning process
+    planning_scene->processPlanningSceneWorldMsg(planning_scene_msg.world);
 
     if (!node_handle.getParam("sbp_plugin", planner_plugin_name)) //sbp_plugin is the ompl library from the launch file
       ROS_FATAL_STREAM("Could not find planner plugin name");
@@ -386,9 +385,9 @@ int main(int argc, char** argv) {
     start_state.setToDefaultValues(start_state.getJointModelGroup(PLANNING_GROUP),"home");
 
     //Displays the starting state in MoveIt! via display_robot_state topic
-    moveit_msgs::PlanningScene planning_scene_msg;    
     planning_scene_msg.world.collision_objects.clear();
     moveit::core::robotStateToRobotStateMsg(start_state,planning_scene_msg.robot_state);
+    planning_scene_msg.robot_state.is_diff = true;
     planning_scene_msg.is_diff = true;
     planning_scene_diff_publisher.publish(planning_scene_msg);
 
@@ -443,9 +442,9 @@ int main(int argc, char** argv) {
     //CLOSE GRIPPER//
     /////////////////
 
-    robot_state::RobotState closed_pick_state(robot_model);
-    closed_pick_state.setToDefaultValues(closed_pick_state.getJointModelGroup(EEF_PLANNING_GROUP), "closed");
-    closed_pick_state.setToDefaultValues(closed_pick_state.getJointModelGroup(PLANNING_GROUP),"pick_state");
+    robot_state::RobotState grasped_pick_state(robot_model);
+    grasped_pick_state.setToDefaultValues(grasped_pick_state.getJointModelGroup(EEF_PLANNING_GROUP), "closed");
+    grasped_pick_state.setToDefaultValues(grasped_pick_state.getJointModelGroup(PLANNING_GROUP),"pick_state");
 
     moveit_msgs::AttachedCollisionObject attached_object;
     attached_object.link_name = "sia20d_leftfinger";
@@ -460,7 +459,8 @@ int main(int argc, char** argv) {
 
     planning_scene_msg.world.collision_objects.clear();
     planning_scene_msg.world.collision_objects.push_back(remove_object);
-    moveit::core::robotStateToRobotStateMsg(closed_pick_state,planning_scene_msg.robot_state);
+    moveit::core::robotStateToRobotStateMsg(grasped_pick_state,planning_scene_msg.robot_state);
+    planning_scene_msg.robot_state.is_diff = true;
     planning_scene_msg.robot_state.attached_collision_objects.push_back(attached_object);
     planning_scene_msg.is_diff = true;
 
@@ -468,7 +468,7 @@ int main(int argc, char** argv) {
     planning_scene->processAttachedCollisionObjectMsg(attached_object);
 
     do{
-      response_main = solve(&closed_pick_state,&closed_pick_state,planning_scene,planner_instance,robot_model,joint_model_group,&(*robot_state),PLANNING_GROUP);
+      response_main = solve(&grasped_pick_state,&grasped_pick_state,planning_scene,planner_instance,robot_model,joint_model_group,&(*robot_state),PLANNING_GROUP);
     } while(seedSuccess == false);
 
     display_trajectory.trajectory_start = response_main.trajectory_start;  //this might suggest why it starts off the wrong way sometimes?
@@ -492,6 +492,126 @@ int main(int argc, char** argv) {
     //Uncomment the following code to make the simulation require an input before continuing
     //^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
     visual_tools.prompt("Please press next in the RvizVisualToolsGui for Placement. Make sure to add the button via the Panels menu in the top bar.");
+
+
+    ////////////////////////
+    //PICK TO CLOSE PLACE //
+    ///////////////////////
+
+
+    //Close Pick state explicitly set from SRDF file in config
+    //^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    robot_state::RobotState close_place_state(robot_model);
+    close_place_state.setToDefaultValues(close_place_state.getJointModelGroup(EEF_PLANNING_GROUP), "closed");
+    close_place_state.setToDefaultValues(close_place_state.getJointModelGroup(PLANNING_GROUP),"close_place_state");
+
+    //Solve the plan using the BFMT+Shortcut algorithm
+    //^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    do{
+      response_main = solve(&grasped_pick_state, &close_place_state,planning_scene,planner_instance,robot_model,joint_model_group,&(*robot_state),PLANNING_GROUP);
+    } while(seedSuccess == false);
+
+    display_trajectory.trajectory_start = response_main.trajectory_start;  //this might suggest why it starts off the wrong way sometimes?
+    display_trajectory.trajectory.clear();
+    display_trajectory.trajectory.push_back(response_main.trajectory);
+    display_publisher.publish(display_trajectory);
+
+    planning_scene_msg.world.collision_objects.clear();
+    moveit::core::robotStateToRobotStateMsg(close_place_state,planning_scene_msg.robot_state);
+    planning_scene_msg.robot_state.is_diff = true;
+    planning_scene_msg.is_diff = true;
+    planning_scene_diff_publisher.publish(planning_scene_msg);
+
+
+    //UNCOMMENT following line if you wish to make code stop here until a button press is received.
+    visual_tools.prompt("Please press next in the RVizVisualToolsGui to continue. Make sure to add the button via the Panels menu in the top bar.");
+
+
+    /////////////////////////
+    //CLOSE PLACE TO PLACE///
+    ////////////////////////
+
+    robot_state::RobotState place_state(robot_model);
+    place_state.setToDefaultValues(place_state.getJointModelGroup(EEF_PLANNING_GROUP), "closed");
+    place_state.setToDefaultValues(place_state.getJointModelGroup(PLANNING_GROUP),"place_state");
+
+    //Solve the plan using the BFMT+Shortcut algorithm
+    //^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    do{
+      response_main = solve(&close_place_state, &place_state,planning_scene,planner_instance,robot_model,joint_model_group,&(*robot_state),PLANNING_GROUP);
+    } while(seedSuccess == false);
+
+    display_trajectory.trajectory_start = response_main.trajectory_start;  //this might suggest why it starts off the wrong way sometimes?
+    display_trajectory.trajectory.clear();
+    display_trajectory.trajectory.push_back(response_main.trajectory);
+    display_publisher.publish(display_trajectory);
+
+    visual_tools.prompt("Please press next in the RVizVisualToolsGui to continue. Make sure to add the button via the Panels menu in the top bar.");
+
+
+    /////////////
+    //DROP OFF///
+    /////////////
+
+    robot_state::RobotState released_place_state(robot_model);
+    released_place_state.setToDefaultValues(released_place_state.getJointModelGroup(EEF_PLANNING_GROUP),"open");
+    released_place_state.setToDefaultValues(released_place_state.getJointModelGroup(PLANNING_GROUP),"place_state");
+
+    do{
+      response_main = solve(&released_place_state, &released_place_state,planning_scene,planner_instance,robot_model,joint_model_group,&(*robot_state),PLANNING_GROUP);
+    } while(seedSuccess == false);
+
+    moveit_msgs::AttachedCollisionObject detach_object;
+    detach_object.object.id = "pick_object";
+    detach_object.link_name = "sia20d_leftfinger";
+    detach_object.object.operation = attached_object.object.REMOVE;
+
+    // geometry_msgs::Pose detached_box_pose;
+    // detached_box_pose.orientation.w = 1.0;
+    // detached_box_pose.position.x = 0.704;
+    // detached_box_pose.position.y = -0.218;
+    // detached_box_pose.position.z = 0.040;
+
+    // attached_object.object.primitive_poses.clear();
+    // attached_object.object.primitive_poses.push_back(detached_box_pose);
+
+    display_trajectory.trajectory_start = response_main.trajectory_start;  //this might suggest why it starts off the wrong way sometimes?
+    display_trajectory.trajectory.clear();
+    display_trajectory.trajectory.push_back(response_main.trajectory);
+    display_publisher.publish(display_trajectory);
+
+    planning_scene_msg.robot_state.attached_collision_objects.clear();
+    planning_scene_msg.robot_state.attached_collision_objects.push_back(detach_object);
+    planning_scene_msg.world.collision_objects.clear();
+    planning_scene_msg.world.collision_objects.push_back(attached_object.object);
+    planning_scene_msg.is_diff = true;
+    planning_scene_msg.robot_state.is_diff = true;
+
+    planning_scene_diff_publisher.publish(planning_scene_msg);
+    //does planning scene still think that there's an object in the location?
+    //probably not, I think
+    planning_scene->processAttachedCollisionObjectMsg(detach_object);
+    planning_scene->processCollisionObjectMsg(attached_object.object);
+
+    visual_tools.prompt("Please press next in the RVizVisualToolsGui to continue. Make sure to add the button via the Panels menu in the top bar.");
+
+    //////////////
+    //HOME //////
+    ////////////
+
+    do{
+      response_main = solve(&released_place_state, &start_state,planning_scene,planner_instance,robot_model,joint_model_group,&(*robot_state),PLANNING_GROUP);
+    } while(seedSuccess == false);
+
+    display_trajectory.trajectory_start = response_main.trajectory_start;  //this might suggest why it starts off the wrong way sometimes?
+    display_trajectory.trajectory.clear();
+    display_trajectory.trajectory.push_back(response_main.trajectory);
+    display_publisher.publish(display_trajectory);
+
+    visual_tools.prompt("Please press next in the RVizVisualToolsGui to continue. Make sure to add the button via the Panels menu in the top bar.");
+
+
+    //TODO: Put object back in its original location
 
     ROS_INFO_STREAM("Current iteration :: "+std::to_string(main_loop_iter));
   }

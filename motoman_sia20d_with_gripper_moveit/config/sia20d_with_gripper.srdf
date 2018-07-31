@@ -61,6 +61,15 @@
         <joint name="joint_b" value="-1.20" />
         <joint name="joint_t" value="0" />
     </group_state>
+    <group_state name="place_state" group="manipulator">
+        <joint name="joint_s" value="-0.80" />
+        <joint name="joint_l" value="1.25" />
+        <joint name="joint_e" value="1.05" />
+        <joint name="joint_u" value="-1.25" />
+        <joint name="joint_r" value="1.03" />
+        <joint name="joint_b" value="-1.20" />
+        <joint name="joint_t" value="0" />
+    </group_state>	
     <group_state name="open" group="hand">
         <joint name="sia20d_finger_joint1" value="0.04" />
         <joint name="sia20d_finger_joint2" value="0.04" />
