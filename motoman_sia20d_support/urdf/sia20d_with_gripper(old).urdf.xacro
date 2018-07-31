@@ -1,0 +1,16 @@
+<?xml version="1.0"?>
+<robot name="sia20d_with_gripper" xmlns:xacro="http://ros.org/wiki/xacro" xmlns:xi="http://www.w3.org/2001/XInclude">
+
+<!-- include macros for sia20d robot and the gripper -->
+<xacro:include filename="$(find motoman_sia20d_support)/urdf/sia20d.xacro" />
+<xacro:include filename="$(find robotiq_arg85_description)/robots/robotiq_arg85_description.URDF" />
+
+<joint name="robot_to_gripper" type="fixed">
+	<origin rpy="0 0 0" xyz="0 0 0"/>
+	<parent link="tool0" />
+	<child link = "robotiq_85_base_link" />
+</joint>
+
+</robot>
+
+

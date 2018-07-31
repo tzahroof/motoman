@@ -1,0 +1,7 @@
+<?xml version="1.0"?>
+<robot name="sia20d_with_gripper" xmlns:xacro="http://www.ros.org/wiki/xacro" xmlns:xi="http://www.w3.org/2001/XInclude">
+	<!-- include macros for sia20d robot and the gripper -->
+	<xacro:include filename="$(find motoman_sia20d_support)/urdf/sia20d.xacro" />
+	<xacro:include filename="$(find franka_description)/robots/hand.xacro" />
+	<xacro:hand ns="sia20d" rpy="0 0 0" connected_to="tool0"/>
+</robot>
