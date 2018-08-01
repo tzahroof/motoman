@@ -46,7 +46,7 @@ double max_EdgeLength_Waypoint_Injection = 0.2; //determines how big the maxEdge
 double allowed_planning_time = 5; //how long the planner is allowed to plan before we cut it off
 static bool seedSuccess = false; //a global variable we use to check if the basic BFMT* managed to generate a plan given our start and goal states
 static int numSeedFails = 0;
-
+static moveit_msgs::PlanningScene stateOfTheWorld;
 
 /*
   Prototype Functions
@@ -140,6 +140,12 @@ static moveit_msgs::MotionPlanResponse solve( robot_state::RobotState *start_sta
 
 }
 
+
+static void chatterCallback(const moveit_msgs::PlanningScene msg)
+{
+  stateOfTheWorld = msg;
+}
+
 /*
 
 Function: main()
@@ -201,6 +207,9 @@ int main(int argc, char** argv) {
 	  ros::Publisher display_publisher = node_handle.advertise<moveit_msgs::DisplayTrajectory>("/move_group/display_planned_path", 1, true);
     ros::Publisher rqt_publisher = node_handle.advertise<trajectory_msgs::JointTrajectory>("/rqt_publisher/", 1);
     ros::Publisher planning_scene_diff_publisher = node_handle.advertise<moveit_msgs::PlanningScene>("/motoman/planning_scene",1);
+
+
+    ros::Subscriber planning_scene_sub = node_handle.subscribe("/motoman/planning_scene", 1000, chatterCallback);
 
     moveit_msgs::DisplayTrajectory display_trajectory;
     moveit_msgs::MotionPlanResponse response_main;
@@ -418,14 +427,22 @@ int main(int argc, char** argv) {
     ////////////////
 
 
-    robot_state::RobotState open_pick_state(robot_model);
-    open_pick_state.setToDefaultValues(open_pick_state.getJointModelGroup(EEF_PLANNING_GROUP), "open");
-    open_pick_state.setToDefaultValues(open_pick_state.getJointModelGroup(PLANNING_GROUP),"pick_state");
+    robot_state::RobotState ungrasped_pick_state(robot_model);
+    ungrasped_pick_state.setToDefaultValues(ungrasped_pick_state.getJointModelGroup(EEF_PLANNING_GROUP), "open");
+    ungrasped_pick_state.setToDefaultValues(ungrasped_pick_state.getJointModelGroup(PLANNING_GROUP),"pick_state");
 
 
     do {
-      response_main = solve(&close_pick_state, &open_pick_state, planning_scene, planner_instance, robot_model,joint_model_group,&(*robot_state),PLANNING_GROUP);
+      response_main = solve(&close_pick_state, &ungrasped_pick_state, planning_scene, planner_instance, robot_model,joint_model_group,&(*robot_state),PLANNING_GROUP);
     } while(seedSuccess == false);
+
+
+    planning_scene_msg.world.collision_objects.clear();
+    moveit::core::robotStateToRobotStateMsg(ungrasped_pick_state,planning_scene_msg.robot_state);
+    planning_scene_msg.robot_state.is_diff = true;
+    planning_scene_msg.is_diff = true;
+    planning_scene_diff_publisher.publish(planning_scene_msg);
+
 
     display_trajectory.trajectory_start = response_main.trajectory_start;  //this might suggest why it starts off the wrong way sometimes?
     display_trajectory.trajectory.clear();
@@ -564,7 +581,7 @@ int main(int argc, char** argv) {
     moveit_msgs::AttachedCollisionObject detach_object;
     detach_object.object.id = "pick_object";
     detach_object.link_name = "sia20d_leftfinger";
-    detach_object.object.operation = attached_object.object.REMOVE;
+    detach_object.object.operation = moveit_msgs::CollisionObject::REMOVE;
 
     // geometry_msgs::Pose detached_box_pose;
     // detached_box_pose.orientation.w = 1.0;
@@ -580,18 +597,14 @@ int main(int argc, char** argv) {
     display_trajectory.trajectory.push_back(response_main.trajectory);
     display_publisher.publish(display_trajectory);
 
+    moveit::core::robotStateToRobotStateMsg(released_place_state, planning_scene_msg.robot_state);
     planning_scene_msg.robot_state.attached_collision_objects.clear();
     planning_scene_msg.robot_state.attached_collision_objects.push_back(detach_object);
-    planning_scene_msg.world.collision_objects.clear();
-    planning_scene_msg.world.collision_objects.push_back(attached_object.object);
-    planning_scene_msg.is_diff = true;
-    planning_scene_msg.robot_state.is_diff = true;
-
     planning_scene_diff_publisher.publish(planning_scene_msg);
-    //does planning scene still think that there's an object in the location?
-    //probably not, I think
+    planning_scene_msg.robot_state.is_diff = true;
+    planning_scene_msg.is_diff = true;
+
     planning_scene->processAttachedCollisionObjectMsg(detach_object);
-    planning_scene->processCollisionObjectMsg(attached_object.object);
 
     visual_tools.prompt("Please press next in the RVizVisualToolsGui to continue. Make sure to add the button via the Panels menu in the top bar.");
 
