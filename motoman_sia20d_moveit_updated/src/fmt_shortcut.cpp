@@ -5,6 +5,7 @@ Motion_plannning_api_tutorial.cpp headers
 #include <chrono>
 #include <complex>
 #include <math.h> 
+#include <limits>
 
 #include <pluginlib/class_loader.h>
 #include <ros/ros.h>
@@ -40,6 +41,7 @@ Motion_plannning_api_tutorial.cpp headers
 const std::string PLANNING_GROUP = "manipulator";
 double max_EdgeLength_Discretization; //determines how big the maxEdgeLength should be for checking discretization
 double max_EdgeLength_Waypoint_Injection; //determines how big the maxEdgeLength should be for WayPoint injection during populate()
+int defaultNumPoints = 5; //TODO: change this
 /*
   Prototype Functions
 */
@@ -50,6 +52,288 @@ static bool checkIfPathHasCollisions(moveit_msgs::MotionPlanResponse *response, 
 static bool clearPath(trajectory_msgs::JointTrajectory *joint_trajectory, planning_scene::PlanningScenePtr planning_scene,const robot_state::JointModelGroup *joint_model_group, robot_state::RobotState *robot_state, int a, int b, int defaultNumPoints);
 static double Shortcut(trajectory_msgs::JointTrajectory *joint_trajectory, planning_scene::PlanningScenePtr *planning_scene, const robot_state::JointModelGroup *joint_model_group, robot_state::RobotState *robot_state, int numShortcutLoops, int defaultNumPoints);
 static double timeParameterize(moveit_msgs::MotionPlanResponse *response, robot_model::RobotModelPtr robot_model, robot_state::RobotState *start_state);
+
+static Eigen::VectorXd determineCostVector(trajectory_msgs::JointTrajectory *joint_trajectory)
+{
+    std::vector<int>::size_type numJointsTariq = joint_trajectory->points[0].positions.size();
+    std::vector<int>::size_type size1 = joint_trajectory->points.size();
+    Eigen::VectorXd returnCostVector(joint_trajectory -> points[0].positions.size());
+    for(unsigned j = 0; j < numJointsTariq; j++) {
+      double costOfCurrentMovement = 0;
+      for(unsigned iter = 0; iter < size1-1; iter++) {
+            costOfCurrentMovement += 
+              fabs((joint_trajectory->points[iter+1].positions[j] - joint_trajectory->points[iter].positions[j]));
+      }
+      returnCostVector(j) = (costOfCurrentMovement);
+    }
+    std::cout<<"Finished determineCost Vector\n";
+    return returnCostVector;
+}
+
+static bool clearPathPartial(trajectory_msgs::JointTrajectory *joint_trajectory, planning_scene::PlanningScenePtr planning_scene,const robot_state::JointModelGroup *joint_model_group, robot_state::RobotState *robot_state, int a, int b, int dof)
+{
+  std::cout<<"Entering clearpathpartial \n";
+  int a_size = joint_trajectory->points[a].positions.size();
+  int b_size = joint_trajectory->points[b].positions.size();
+
+  std::vector<double>::size_type numberDOFs = joint_trajectory->points[0].positions.size();
+
+  if(a_size != b_size)
+  {
+    ROS_ERROR_STREAM("The number of joints of a and b in Clear Path are not equal ");
+    return false;
+  }
+  
+
+  double increment = (joint_trajectory->points[b].positions[dof] - joint_trajectory->points[a].positions[dof])/(b-a);
+
+
+  // Sets up a collision check for each of the nodes of the discretized path. Then uses the 
+  // collision_detection::CollisionRequest object to check if the state is in collision.
+  for(int i = 0; i <= b-a; i++) 
+  {
+    Eigen::VectorXd substateVector(numberDOFs);
+    //Eigen::VectorXd substateVector = APoints + (BPoints - APoints)/(numPoints-1) * i;
+    for(int j = 0; j < numberDOFs;j++)
+    {
+      substateVector(j) = joint_trajectory->points[a+i].positions[j];
+    }
+    //interpolate the selected dof over the waypoints from a -> b
+    substateVector(dof) = joint_trajectory->points[a].positions[dof] + increment*i;
+
+    std::cout << "EIGEN " << (a+i) << " :: ";
+
+    for(int j = 0; j < numberDOFs; j++)
+    {
+        std::cout << substateVector(j) << " ";
+    }
+    std::cout << "\n";
+
+    collision_detection::CollisionRequest c_req;
+    collision_detection::CollisionResult c_res;
+    c_req.group_name = PLANNING_GROUP; //replace this for improved modularity later
+    c_req.contacts = true;
+    c_req.max_contacts = 100;
+    c_req.max_contacts_per_pair = 5;
+    c_req.verbose = false;
+    std::vector<double> substate_joint_vals(&substateVector[0], substateVector.data()+substateVector.cols()*substateVector.rows());
+
+    robot_state->setJointGroupPositions(joint_model_group,substate_joint_vals);
+
+    planning_scene ->checkCollision(c_req,c_res, *robot_state);
+
+
+    if(c_res.collision)
+    {
+      std::cout << "COLLISION DETECTED!\n";
+      return false;
+    }
+
+  }
+  return true;
+}
+
+/*
+Function: randomNumber()
+
+Purpose: Selects a random number between two bounds
+
+*/
+
+static double randomNumber(double lower_bound, double upper_bound)
+{
+  return (double)rand()/RAND_MAX*(upper_bound-lower_bound)+lower_bound;
+}
+
+/*
+
+Function: selectDof()
+
+Purpose: Selects a degree-of-freedom to perform partial shortcut method based on AWD (Weight Distribution of Joints). Currently selects only 1 joint.
+         Sums the weights of AWD to randomly select a degree-
+
+*/
+ 
+
+static int selectDOF(Eigen::VectorXd AWD)
+{
+  std::cout<<"entering selectDOF\n";
+  double sumOfWeights = 0;
+  for(int i = 0; i < AWD.size(); i++)
+  {
+    std::cout << "AWD "<< i << " :: " << AWD(i) << "\n";
+    sumOfWeights += AWD(i);
+  }
+  std::cout<<"Going into for loop. Sum of Weights :: "<<sumOfWeights<<"\n";
+  double rnd = randomNumber(0,sumOfWeights);
+  std::cout<<"rnd :: " <<rnd << "\n";
+  for(int i = 0; i < AWD.size(); i++)
+  {
+    if(rnd < AWD(i))
+    {
+      std::cout<<"AWD(i) :: " << AWD(i) << "    i :: " << i <<"\n";
+      return i; 
+    } else
+    {
+      rnd -= AWD(i);
+      std::cout<<"new rnd :: " << rnd << "\n";
+    }
+  }
+
+  return -1; //we should never get here
+
+}
+
+static Eigen::VectorXd genAWD(Eigen::VectorXd refCost, trajectory_msgs::JointTrajectory *joint_trajectory)
+{
+  std::cout<<"Entering genAWD\n";
+  Eigen::VectorXd currentCost = determineCostVector(joint_trajectory);
+  return (currentCost-refCost).cwiseAbs();
+}
+
+
+static double AdaptiveShortcut(trajectory_msgs::JointTrajectory *joint_trajectory, planning_scene::PlanningScenePtr *planning_scene, const robot_state::JointModelGroup *joint_model_group, robot_state::RobotState *robot_state, int numShortcutLoops,ros::Publisher *display_publisher, moveit_msgs::MotionPlanResponse *response)
+{
+
+  double time = ros::Time::now().toSec();
+  std::cout << "Entering AdaptiveShortcut\n";
+  std::vector<trajectory_msgs::JointTrajectoryPoint>::size_type trajSize = joint_trajectory->points.size();
+
+  std::cout <<"Trajectory Size :: " <<trajSize <<"\n";
+  //Ensure that the trajectory is valid.
+  if(joint_trajectory== nullptr || joint_trajectory->points.size() == 0)
+  {
+    return -1;
+  }
+
+  std::cout <<"Creating the Reference Cost Vector" << std::endl;
+
+  //Determine reference cost. This is cost from start to goal assuming no collisions. It is a vector.
+  Eigen::VectorXd refCostVector(joint_trajectory->points[0].positions.size());
+  for(int i = 0; i < refCostVector.size(); i++)
+  {
+    refCostVector(i) = joint_trajectory->points.back().positions[i] - joint_trajectory->points[0].positions[i];
+  }
+
+  std::cout <<"Entering the main algorithm loop\n";
+  //begin main algorithm loop
+  for(int loop_iter = 0; loop_iter < numShortcutLoops; loop_iter++) //TODO: Change 1 to numShortcutLoops
+  {
+    std::cout<<"Doing the adaptive part \n";
+    Eigen::VectorXd AWD = genAWD(refCostVector, joint_trajectory);
+    int dof = selectDOF(AWD);
+
+
+    std::cout<<"Picking a and b\n";
+    int a; //variable marking random waypoint (beginning)
+    int b; //variable marking random waypoint (end) -> attempt to connect a to b
+
+    if(trajSize <= 2)
+    {
+      ROS_INFO_STREAM("Trajectory has "+std::to_string(trajSize)+" points\n");
+      break; //trajectory has been reduced to a straightline between two points, is just a single point, or doesn't have any points
+    }
+    else if(trajSize == 3)
+    {
+      a = 0; //special case to prevent modulus by 0
+      b = 2;
+    }
+    else 
+    {
+
+      a = rand()%(trajSize-3); //returns a value between 0 and the third-to-last element (b can be from 0 -> last element)
+      b = rand()%(trajSize);
+
+      while(!(b > a && (b-a) > 1)) 
+      { 
+       b = rand()%(trajSize); //ensures that index b is after a
+      }
+
+    }
+
+    //The following calculates the cost of improvement of the degree of freedom
+    //Ensures that there is improvement to prevent re-doing an already improved part (checking for collisions is intensive)
+
+    std::cout<<"Checking whether the cost has improved\n";
+
+    std::vector<int>::size_type numJointsTariq = joint_trajectory->points[0].positions.size();
+
+    double refCostab = 0.0;
+    for(unsigned iter = a; iter < b; iter++) {
+        refCostab += 
+          fabs((joint_trajectory->points[iter+1].positions[dof] - joint_trajectory->points[iter].positions[dof]));
+        std::cout << "refCostab :: " << refCostab <<"\n";
+    }        
+
+    double costOfImprovement = fabs(joint_trajectory->points[b].positions[dof] - joint_trajectory->points[a].positions[dof]);
+
+
+    std::cout<<"Moving into CostOfImproveMent < refCostab\n";
+    std::cout<<"CostOfImprovement :: " << costOfImprovement<<"\n";
+    std::cout<<"refCost :: " << refCostab <<"\n";
+    std::cout<<"dof :: " << dof << "\n";
+    std::cout<<"a :: " << a <<" b :: " << b << "\n";
+    //TODO: Reimplement following lines. Commented out to see if above code is killing the program.
+    //the straightline cost improves the trajectory, so we are going to check if the path is valid
+    if(costOfImprovement < refCostab)
+    {
+      std::cout<<"Calling clearPathPartial\n";
+      if(clearPathPartial(joint_trajectory, *planning_scene,joint_model_group, robot_state, a, b, dof)) {
+        //Officially change the joint
+        std::cout<<"Clear path found!!\n";
+
+        //check to see whether we actually replaced the points
+        for(int i = 0; i < trajSize; i++)
+        {
+          std::cout << "WayPoint " << i << " :: ";
+          for(int j = 0; j < joint_trajectory->points[0].positions.size();j++)
+          {
+            std::cout << joint_trajectory->points[i].positions[j] << " ";
+          }
+          std::cout << "\n";
+        }
+
+
+        double increment = (joint_trajectory->points[b].positions[dof] - joint_trajectory->points[a].positions[dof])/(b-a);
+        for(int i = 0; i <= b-a; i++)
+        {
+          joint_trajectory->points[a+i].positions[dof] = joint_trajectory->points[a].positions[dof] + increment*i;
+        }
+
+
+        //check to see whether we actually replaced the points
+        for(int i = 0; i < trajSize; i++)
+        {
+          std::cout << "WayPoint " << i << " :: ";
+          for(int j = 0; j < joint_trajectory->points[0].positions.size();j++)
+          {
+            std::cout << joint_trajectory->points[i].positions[j] << " ";
+          }
+          std::cout << "\n";
+        }
+
+        // std::cout << "Enter something lmao\n";
+        // int cowabunga = 0;
+        // std::cin >> cowabunga;
+        // std::cin.clear();
+        // std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+
+        // //DISPLAYING THE TRAJECTORY
+        // //TODO: Are JointTrajectory are response.trajectory.Joint_traejctory the same?
+        // moveit_msgs::DisplayTrajectory display_trajectory;
+
+        // display_trajectory.trajectory_start = response->trajectory_start;
+        // display_trajectory.trajectory.push_back(response->trajectory);
+        // display_publisher->publish(display_trajectory);
+
+      }
+    }
+  }
+  std::cout << "Exiting the AdaptiveShortcut Method";
+  return ros::Time::now().toSec() - time;
+
+}
+
 
 
 /*
@@ -71,8 +355,12 @@ int main(int argc, char** argv) {
   spinner.start();
   ros::NodeHandle node_handle("~");
   int max_Iter = 1; //change this to alter the number of simulations
+  std::string shortcutMethod = "";
   int numSeedFails = 0;
   double avgTime = 0.0;
+  double avgSeedTime = 0.0;
+  double avgSeedCost = 0.0;
+  double avgShortcutCost = 0.0;
 
   // Start
   // ^^^^^
@@ -101,7 +389,7 @@ int main(int argc, char** argv) {
     // :planning_scene:`PlanningScene` that maintains the state of
     // the world (including the robot).
     planning_scene::PlanningScenePtr planning_scene(new planning_scene::PlanningScene(robot_model));
-
+    moveit_msgs::PlanningScene planning_scene_msg;
     // We will now construct a loader to load a planner, by name.
     // Note that we are using the ROS pluginlib library here.
     boost::scoped_ptr<pluginlib::ClassLoader<planning_interface::PlannerManager>> planner_plugin_loader;
@@ -129,6 +417,11 @@ int main(int argc, char** argv) {
     if(!node_handle.getParam("max_Iter", max_Iter))
     {
       ROS_INFO_STREAM("No max_Iter value provided. Defaulting to 50 iterations instead");
+    }
+    if(!node_handle.getParam("shortcut", shortcutMethod))
+    {
+      shortcutMethod = "Regular";
+      ROS_INFO_STREAM("No Shortcut Method provided. Defaulting to regular shortcut instead");
     }
 
 
@@ -168,6 +461,9 @@ int main(int argc, char** argv) {
    // ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    // visual_tools.prompt("Press 'next' in the RvizVisualToolsGui window to start the demo. Make sure to add the button via the Panels menu in the top bar.");
 
+
+  //SQUARE BOX
+  //^^^^^^^^^^^
   moveit_msgs::CollisionObject collision_object;
 
   shape_msgs::SolidPrimitive primitive;
@@ -187,14 +483,171 @@ int main(int argc, char** argv) {
   collision_object.primitive_poses.push_back(box_pose);
   collision_object.operation = collision_object.ADD;
   collision_object.header.frame_id = "/base_link";
+  planning_scene_msg.world.collision_objects.push_back(collision_object);
+  planning_scene->processCollisionObjectMsg(collision_object);
+
+
+  //SPHERE OBJECT
+  //^^^^^^^^^^^^^
+  // moveit_msgs::CollisionObject sphere_object;
+
+  // shape_msgs::SolidPrimitive sphere_primitive;
+  // sphere_primitive.type = sphere_primitive.SPHERE;
+  // sphere_primitive.dimensions.resize(1);
+  // sphere_primitive.dimensions[0] = 0.1;
+
+  // geometry_msgs::Pose sphere_pose;
+  // sphere_pose.orientation.w = 1.0;
+  // sphere_pose.position.x = 0.35;
+  // sphere_pose.position.y = 0.1;
+  // sphere_pose.position.z = 0.9;
+
+  // sphere_object.primitives.push_back(sphere_primitive);
+  // sphere_object.primitive_poses.push_back(sphere_pose);
+  // sphere_object.operation = sphere_object.ADD;
+  // sphere_object.header.frame_id = "/base_link";
+  // planning_scene_msg.world.collision_objects.push_back(sphere_object);
+  // planning_scene->processCollisionObjectMsg(sphere_object);
+
+
+  //MULTIPLE OBJECTS
+  //^^^^^^^^^^^^^
+  // moveit_msgs::CollisionObject sphere_object;
+  // sphere_object.id="sphere_object";
+  // shape_msgs::SolidPrimitive sphere_primitive;
+  // sphere_primitive.type = sphere_primitive.SPHERE;
+  // sphere_primitive.dimensions.resize(1);
+  // sphere_primitive.dimensions[0] = 0.1;
+
+  // geometry_msgs::Pose sphere_pose;
+  // sphere_pose.orientation.w = 1.0;
+  // sphere_pose.position.x = 0.35;
+  // sphere_pose.position.y = 0.1;
+  // sphere_pose.position.z = 1.05;
+
+  // sphere_object.primitives.push_back(sphere_primitive);
+  // sphere_object.primitive_poses.push_back(sphere_pose);
+  // sphere_object.operation = sphere_object.ADD;
+  // sphere_object.header.frame_id = "/base_link";
+  // planning_scene_msg.world.collision_objects.push_back(sphere_object);
+  // planning_scene->processCollisionObjectMsg(sphere_object);
+
+
+
+  // moveit_msgs::CollisionObject sphere_object2;
+  // sphere_object2.id="sphere_object2";
+  // shape_msgs::SolidPrimitive sphere_primitive2;
+  // sphere_primitive2.type = sphere_primitive2.SPHERE;
+  // sphere_primitive2.dimensions.resize(1);
+  // sphere_primitive2.dimensions[0] = 0.1;
+
+  // geometry_msgs::Pose sphere_pose2;
+  // sphere_pose2.orientation.w = 1.0;
+  // sphere_pose2.position.x = 0.15;
+  // sphere_pose2.position.y = -0.3;
+  // sphere_pose2.position.z = 0.9;
+
+  // sphere_object2.primitives.push_back(sphere_primitive2);
+  // sphere_object2.primitive_poses.push_back(sphere_pose2);
+  // sphere_object2.operation = sphere_object2.ADD;
+  // sphere_object2.header.frame_id = "/base_link";
+  // planning_scene_msg.world.collision_objects.push_back(sphere_object2);
+  // planning_scene->processCollisionObjectMsg(sphere_object2);
+
+
+  // moveit_msgs::CollisionObject sphere_object3;
+  // sphere_object3.id="sphere_object3";
+  // shape_msgs::SolidPrimitive sphere_primitive3;
+  // sphere_primitive3.type = sphere_primitive3.SPHERE;
+  // sphere_primitive3.dimensions.resize(1);
+  // sphere_primitive3.dimensions[0] = 0.1;
+
+  // geometry_msgs::Pose sphere_pose3;
+  // sphere_pose3.orientation.w = 1.0;
+  // sphere_pose3.position.x = 0.0;
+  // sphere_pose3.position.y = 0.28;
+  // sphere_pose3.position.z = 1.5;
+
+  // sphere_object3.primitives.push_back(sphere_primitive3);
+  // sphere_object3.primitive_poses.push_back(sphere_pose3);
+  // sphere_object3.operation = sphere_object3.ADD;
+  // sphere_object3.header.frame_id = "/base_link";
+  // planning_scene_msg.world.collision_objects.push_back(sphere_object3);
+  // planning_scene->processCollisionObjectMsg(sphere_object3);
+
+  // moveit_msgs::CollisionObject sphere_object4;
+  // sphere_object4.id="sphere_object4";
+  // shape_msgs::SolidPrimitive sphere_primitive4;
+  // sphere_primitive4.type = sphere_primitive4.SPHERE;
+  // sphere_primitive4.dimensions.resize(1);
+  // sphere_primitive4.dimensions[0] = 0.1;
+
+  // geometry_msgs::Pose sphere_pose4;
+  // sphere_pose4.orientation.w = 1.0;
+  // sphere_pose4.position.x = 0.0;
+  // sphere_pose4.position.y = 0.4;
+  // sphere_pose4.position.z = 0.3;
+
+  // sphere_object4.primitives.push_back(sphere_primitive4);
+  // sphere_object4.primitive_poses.push_back(sphere_pose4);
+  // sphere_object4.operation = sphere_object4.ADD;
+  // sphere_object4.header.frame_id = "/base_link";
+  // planning_scene_msg.world.collision_objects.push_back(sphere_object4);
+  // planning_scene->processCollisionObjectMsg(sphere_object4);
+
+
+  // moveit_msgs::CollisionObject collision_object;
+  // collision_object.id="collision_object";
+  // shape_msgs::SolidPrimitive primitive;
+  // primitive.type = primitive.BOX;
+  // primitive.dimensions.resize(3);
+  // primitive.dimensions[0] = 0.1;
+  // primitive.dimensions[1] = 0.5;
+  // primitive.dimensions[2] = 0.05;
+
+  // geometry_msgs::Pose box_pose;
+  // box_pose.orientation.w = 1.0;
+  // box_pose.position.x = 0.4;
+  // box_pose.position.y = 0.15;
+  // box_pose.position.z = 0.83;
+
+  // collision_object.primitives.push_back(primitive);
+  // collision_object.primitive_poses.push_back(box_pose);
+  // collision_object.operation = collision_object.ADD;
+  // collision_object.header.frame_id = "/base_link";
+  // planning_scene_msg.world.collision_objects.push_back(collision_object);
+  // planning_scene->processCollisionObjectMsg(collision_object);
+
+  // moveit_msgs::CollisionObject collision_object1;
+  // collision_object1.id="collision_object1";
+  // shape_msgs::SolidPrimitive primitive1;
+  // primitive1.type = primitive1.BOX;
+  // primitive1.dimensions.resize(3);
+  // primitive1.dimensions[0] = 0.15;
+  // primitive1.dimensions[1] = 0.15;
+  // primitive1.dimensions[2] = 0.15;
+
+  // geometry_msgs::Pose box_pose1;
+  // box_pose1.orientation.w = 1.0;
+  // box_pose1.position.x = 0.0;
+  // box_pose1.position.y = 0.45;
+  // box_pose1.position.z = 0.85;
+
+  // collision_object1.primitives.push_back(primitive1);
+  // collision_object1.primitive_poses.push_back(box_pose1);
+  // collision_object1.operation = collision_object1.ADD;
+  // collision_object1.header.frame_id = "/base_link";
+  // planning_scene_msg.world.collision_objects.push_back(collision_object1);
+  // planning_scene->processCollisionObjectMsg(collision_object1);
+
+
 
   ROS_INFO("Adding the object into the world");
-  moveit_msgs::PlanningScene planning_scene_msg;
-  planning_scene_msg.world.collision_objects.push_back(collision_object);
+  
   planning_scene_msg.is_diff = true;
   planning_scene_diff_publisher.publish(planning_scene_msg);
 
-  planning_scene->processCollisionObjectMsg(collision_object);
+
 
   ros::Duration(1).sleep();
 
@@ -345,13 +798,14 @@ int main(int argc, char** argv) {
       moveit_msgs::DisplayTrajectory display_trajectory;
 
       avgTime += response.planning_time;
-
+      avgSeedTime += response.planning_time;
 
       //UNCOMMENT FOLLOWING CODE IF YOU WANT THE FMT TRAJECTORY BROADCASTED to MoveIt! without smoothing
       //^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
       /* Visualize the trajectory */
       ////^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+      //TODO: Comment the following lines
      //  ROS_INFO("Visualizing the trajectory");
 	    // display_trajectory.trajectory_start = response.trajectory_start;
 	    // display_trajectory.trajectory.push_back(response.trajectory);
@@ -391,7 +845,9 @@ int main(int argc, char** argv) {
 	    //^^^^^^^^^^^^^^^
 
 	    //Displays the Cost
-	    ROS_INFO_STREAM("BFMT Cost :: " + std::to_string(determineCost(&(response.trajectory.joint_trajectory))));
+      double seedCost = determineCost(&(response.trajectory.joint_trajectory));
+      avgSeedCost += seedCost;
+      ROS_INFO_STREAM("BFMT Cost :: " + std::to_string(seedCost));
 
 
 
@@ -412,7 +868,15 @@ int main(int argc, char** argv) {
 
       // Send the trajectory to the Shortcut Method to prune unnecessary movements
       ROS_INFO_STREAM("Pre-processing size :: " + std::to_string(response.trajectory.joint_trajectory.points.size()));
-      avgTime += Shortcut(&(response.trajectory.joint_trajectory),&planning_scene,joint_model_group,&(*robot_state),30,3);
+      if(shortcutMethod == "Adaptive")
+      {
+        //TODO: Add averageTime code here :)
+        avgTime += AdaptiveShortcut(&(response.trajectory.joint_trajectory), &planning_scene, joint_model_group, &(*robot_state), 50,&display_publisher,&response);
+
+      } else { //has to be regular Shortcut
+        avgTime += Shortcut(&(response.trajectory.joint_trajectory),&planning_scene,joint_model_group,&(*robot_state),30,3);
+      }
+      
 
 
       //Time parameterize said trajectory again (waypoints were removed and added from previous method)
@@ -449,7 +913,9 @@ int main(int argc, char** argv) {
       // outputFile.close();
       // ROS_INFO_STREAM("Finished creating log file");
 
-      ROS_INFO_STREAM("Final Plan Cost :: " + std::to_string(determineCost(&(response.trajectory.joint_trajectory))));
+      double shortcutCost = determineCost(&(response.trajectory.joint_trajectory));
+      avgShortcutCost += shortcutCost;
+      ROS_INFO_STREAM("Final Plan Cost :: " + std::to_string(shortcutCost));
 
     }
     ROS_INFO_STREAM("Current iteration :: "+std::to_string(main_loop_iter));
@@ -461,8 +927,14 @@ int main(int argc, char** argv) {
   }
 
   avgTime = avgTime/(max_Iter-numSeedFails);
-  ROS_INFO_STREAM("Average Time :: " +std::to_string(avgTime));
+  avgSeedTime = avgSeedTime/(max_Iter-numSeedFails);
+  avgShortcutCost = avgShortcutCost/(max_Iter-numSeedFails);
+  avgSeedCost = avgSeedCost/(max_Iter-numSeedFails);
+  ROS_INFO_STREAM("Average BFMT* Time :: " +std::to_string(avgSeedTime));
+  ROS_INFO_STREAM("Average BFMT*+Shortcut Time :: " +std::to_string(avgTime));
   ROS_INFO_STREAM("Number of SEED failures :: " +std::to_string(numSeedFails));
+  ROS_INFO_STREAM("Average BFMT* Cost :: " +std::to_string(avgSeedCost));
+  ROS_INFO_STREAM("Average BFMT*+Shortcut Cost :: " + std::to_string(avgShortcutCost));
 
 }
 
@@ -707,7 +1179,7 @@ static double determineCost(trajectory_msgs::JointTrajectory *joint_trajectory)
             costOfCurrentMovement += 
               fabs((joint_trajectory->points[iter+1].positions[j] - joint_trajectory->points[iter].positions[j]));
       }
-      cost += sqrt(costOfCurrentMovement);
+      cost += (costOfCurrentMovement);
     }
     return cost;
 }

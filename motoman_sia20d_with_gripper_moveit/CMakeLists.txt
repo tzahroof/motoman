@@ -53,6 +53,7 @@ include_directories(SYSTEM ${THIS_PACKAGE_INCLUDE_DIRS} ${Boost_INCLUDE_DIR} ${E
 include_directories(${catkin_INCLUDE_DIRS})
 link_directories(${catkin_LIBRARY_DIRS})
 
+# acknowledges the c++ code as a ROS node
 add_executable(pick_place src/pick_place.cpp)
 target_link_libraries(pick_place ${catkin_LIBRARIES} ${Boost_LIBRARIES})
 install(TARGETS pick_place DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})

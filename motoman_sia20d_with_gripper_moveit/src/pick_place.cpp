@@ -140,12 +140,6 @@ static moveit_msgs::MotionPlanResponse solve( robot_state::RobotState *start_sta
 
 }
 
-
-static void chatterCallback(const moveit_msgs::PlanningScene msg)
-{
-  stateOfTheWorld = msg;
-}
-
 /*
 
 Function: main()
@@ -208,8 +202,6 @@ int main(int argc, char** argv) {
     ros::Publisher rqt_publisher = node_handle.advertise<trajectory_msgs::JointTrajectory>("/rqt_publisher/", 1);
     ros::Publisher planning_scene_diff_publisher = node_handle.advertise<moveit_msgs::PlanningScene>("/motoman/planning_scene",1);
 
-
-    ros::Subscriber planning_scene_sub = node_handle.subscribe("/motoman/planning_scene", 1000, chatterCallback);
 
     moveit_msgs::DisplayTrajectory display_trajectory;
     moveit_msgs::MotionPlanResponse response_main;

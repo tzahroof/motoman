@@ -49,7 +49,7 @@ static double determineCost(trajectory_msgs::JointTrajectory *joint_trajectory)
             costOfCurrentMovement += 
               fabs((joint_trajectory->points[iter+1].positions[j] - joint_trajectory->points[iter].positions[j]));
       }
-      cost += sqrt(costOfCurrentMovement);
+      cost += (costOfCurrentMovement);
     }
     return cost;
 }
@@ -60,10 +60,13 @@ int main(int argc, char** argv) {
   ros::AsyncSpinner spinner(1);
   spinner.start();
   ros::NodeHandle node_handle("~");
-  const int max_Iter = 50;
+  const int max_Iter = 100;
   int numStompFails = 0;
   int numSeedFails = 0;
   double avgTime = 0.0;
+  double avgSeedTime = 0.0;
+  double avgSeedCost = 0.0;
+  double avgSTOMPCost = 0.0;
 
  // BEGIN_TUTORIAL
   // Start
@@ -91,7 +94,7 @@ int main(int argc, char** argv) {
     // :planning_scene:`PlanningScene` that maintains the state of
     // the world (including the robot).
     planning_scene::PlanningScenePtr planning_scene(new planning_scene::PlanningScene(robot_model));
-
+    moveit_msgs::PlanningScene planning_scene_msg;
     // We will now construct a loader to load a planner, by name.
     // Note that we are using the ROS pluginlib library here.
     boost::scoped_ptr<pluginlib::ClassLoader<planning_interface::PlannerManager>> planner_plugin_loader;
@@ -153,33 +156,188 @@ int main(int argc, char** argv) {
       The following adds a collision obstacle into the environment for navigational challenge
     */
 
-    moveit_msgs::CollisionObject collision_object;
+  //SQUARE BOX
+  //^^^^^^^^^^^
+  // moveit_msgs::CollisionObject collision_object;
 
+  // shape_msgs::SolidPrimitive primitive;
+  // primitive.type = primitive.BOX;
+  // primitive.dimensions.resize(3);
+  // primitive.dimensions[0] = 0.2;
+  // primitive.dimensions[1] = 0.4;
+  // primitive.dimensions[2] = 0.4;
+
+  // geometry_msgs::Pose box_pose;
+  // box_pose.orientation.w = 1.0;
+  // box_pose.position.x = 0.35;
+  // box_pose.position.y = 0.1;
+  // box_pose.position.z = 0.9;
+
+  // collision_object.primitives.push_back(primitive);
+  // collision_object.primitive_poses.push_back(box_pose);
+  // collision_object.operation = collision_object.ADD;
+  // collision_object.header.frame_id = "/base_link";
+  // planning_scene_msg.world.collision_objects.push_back(collision_object);
+  // planning_scene->processCollisionObjectMsg(collision_object);
+
+
+  //SPHERE OBJECT
+  //^^^^^^^^^^^^^
+  // moveit_msgs::CollisionObject sphere_object;
+
+  // shape_msgs::SolidPrimitive sphere_primitive;
+  // sphere_primitive.type = sphere_primitive.SPHERE;
+  // sphere_primitive.dimensions.resize(1);
+  // sphere_primitive.dimensions[0] = 0.1;
+
+  // geometry_msgs::Pose sphere_pose;
+  // sphere_pose.orientation.w = 1.0;
+  // sphere_pose.position.x = 0.35;
+  // sphere_pose.position.y = 0.1;
+  // sphere_pose.position.z = 0.9;
+
+  // sphere_object.primitives.push_back(sphere_primitive);
+  // sphere_object.primitive_poses.push_back(sphere_pose);
+  // sphere_object.operation = sphere_object.ADD;
+  // sphere_object.header.frame_id = "/base_link";
+  // planning_scene_msg.world.collision_objects.push_back(sphere_object);
+  // planning_scene->processCollisionObjectMsg(sphere_object);
+
+  //MULTIPLE OBJECTS
+  //^^^^^^^^^^^^^
+  moveit_msgs::CollisionObject sphere_object;
+  sphere_object.id="sphere_object";
+  shape_msgs::SolidPrimitive sphere_primitive;
+  sphere_primitive.type = sphere_primitive.SPHERE;
+  sphere_primitive.dimensions.resize(1);
+  sphere_primitive.dimensions[0] = 0.1;
+
+  geometry_msgs::Pose sphere_pose;
+  sphere_pose.orientation.w = 1.0;
+  sphere_pose.position.x = 0.35;
+  sphere_pose.position.y = 0.1;
+  sphere_pose.position.z = 1.05;
+
+  sphere_object.primitives.push_back(sphere_primitive);
+  sphere_object.primitive_poses.push_back(sphere_pose);
+  sphere_object.operation = sphere_object.ADD;
+  sphere_object.header.frame_id = "/base_link";
+  planning_scene_msg.world.collision_objects.push_back(sphere_object);
+  planning_scene->processCollisionObjectMsg(sphere_object);
+
+
+
+  moveit_msgs::CollisionObject sphere_object2;
+  sphere_object2.id="sphere_object2";
+  shape_msgs::SolidPrimitive sphere_primitive2;
+  sphere_primitive2.type = sphere_primitive2.SPHERE;
+  sphere_primitive2.dimensions.resize(1);
+  sphere_primitive2.dimensions[0] = 0.1;
+
+  geometry_msgs::Pose sphere_pose2;
+  sphere_pose2.orientation.w = 1.0;
+  sphere_pose2.position.x = 0.15;
+  sphere_pose2.position.y = -0.3;
+  sphere_pose2.position.z = 0.9;
+
+  sphere_object2.primitives.push_back(sphere_primitive2);
+  sphere_object2.primitive_poses.push_back(sphere_pose2);
+  sphere_object2.operation = sphere_object2.ADD;
+  sphere_object2.header.frame_id = "/base_link";
+  planning_scene_msg.world.collision_objects.push_back(sphere_object2);
+  planning_scene->processCollisionObjectMsg(sphere_object2);
+
+
+  moveit_msgs::CollisionObject sphere_object3;
+  sphere_object3.id="sphere_object3";
+  shape_msgs::SolidPrimitive sphere_primitive3;
+  sphere_primitive3.type = sphere_primitive3.SPHERE;
+  sphere_primitive3.dimensions.resize(1);
+  sphere_primitive3.dimensions[0] = 0.1;
+
+  geometry_msgs::Pose sphere_pose3;
+  sphere_pose3.orientation.w = 1.0;
+  sphere_pose3.position.x = 0.0;
+  sphere_pose3.position.y = 0.28;
+  sphere_pose3.position.z = 1.5;
+
+  sphere_object3.primitives.push_back(sphere_primitive3);
+  sphere_object3.primitive_poses.push_back(sphere_pose3);
+  sphere_object3.operation = sphere_object3.ADD;
+  sphere_object3.header.frame_id = "/base_link";
+  planning_scene_msg.world.collision_objects.push_back(sphere_object3);
+  planning_scene->processCollisionObjectMsg(sphere_object3);
+
+  moveit_msgs::CollisionObject sphere_object4;
+  sphere_object4.id="sphere_object4";
+  shape_msgs::SolidPrimitive sphere_primitive4;
+  sphere_primitive4.type = sphere_primitive4.SPHERE;
+  sphere_primitive4.dimensions.resize(1);
+  sphere_primitive4.dimensions[0] = 0.1;
+
+  geometry_msgs::Pose sphere_pose4;
+  sphere_pose4.orientation.w = 1.0;
+  sphere_pose4.position.x = 0.0;
+  sphere_pose4.position.y = 0.4;
+  sphere_pose4.position.z = 0.3;
+
+  sphere_object4.primitives.push_back(sphere_primitive4);
+  sphere_object4.primitive_poses.push_back(sphere_pose4);
+  sphere_object4.operation = sphere_object4.ADD;
+  sphere_object4.header.frame_id = "/base_link";
+  planning_scene_msg.world.collision_objects.push_back(sphere_object4);
+  planning_scene->processCollisionObjectMsg(sphere_object4);
+
+
+  moveit_msgs::CollisionObject collision_object;
+  collision_object.id="collision_object";
   shape_msgs::SolidPrimitive primitive;
   primitive.type = primitive.BOX;
   primitive.dimensions.resize(3);
-  primitive.dimensions[0] = 0.2;
-  primitive.dimensions[1] = 0.4;
-  primitive.dimensions[2] = 0.4;
+  primitive.dimensions[0] = 0.1;
+  primitive.dimensions[1] = 0.5;
+  primitive.dimensions[2] = 0.05;
 
   geometry_msgs::Pose box_pose;
   box_pose.orientation.w = 1.0;
-  box_pose.position.x = 0.35;
-  box_pose.position.y = 0.1;
-  box_pose.position.z = 0.9;
+  box_pose.position.x = 0.4;
+  box_pose.position.y = 0.15;
+  box_pose.position.z = 0.83;
 
-    collision_object.primitives.push_back(primitive);
-    collision_object.primitive_poses.push_back(box_pose);
-    collision_object.operation = collision_object.ADD;
-    collision_object.header.frame_id = "/base_link";
+  collision_object.primitives.push_back(primitive);
+  collision_object.primitive_poses.push_back(box_pose);
+  collision_object.operation = collision_object.ADD;
+  collision_object.header.frame_id = "/base_link";
+  planning_scene_msg.world.collision_objects.push_back(collision_object);
+  planning_scene->processCollisionObjectMsg(collision_object);
 
-    ROS_INFO("Adding the object into the world");
-    moveit_msgs::PlanningScene planning_scene_msg;
-    planning_scene_msg.world.collision_objects.push_back(collision_object);
-    planning_scene_msg.is_diff = true;
-    planning_scene_diff_publisher.publish(planning_scene_msg);
+  moveit_msgs::CollisionObject collision_object1;
+  collision_object1.id="collision_object1";
+  shape_msgs::SolidPrimitive primitive1;
+  primitive1.type = primitive1.BOX;
+  primitive1.dimensions.resize(3);
+  primitive1.dimensions[0] = 0.15;
+  primitive1.dimensions[1] = 0.15;
+  primitive1.dimensions[2] = 0.15;
 
-    planning_scene->processCollisionObjectMsg(collision_object);
+  geometry_msgs::Pose box_pose1;
+  box_pose1.orientation.w = 1.0;
+  box_pose1.position.x = 0.0;
+  box_pose1.position.y = 0.45;
+  box_pose1.position.z = 0.85;
+
+  collision_object1.primitives.push_back(primitive1);
+  collision_object1.primitive_poses.push_back(box_pose1);
+  collision_object1.operation = collision_object1.ADD;
+  collision_object1.header.frame_id = "/base_link";
+  planning_scene_msg.world.collision_objects.push_back(collision_object1);
+  planning_scene->processCollisionObjectMsg(collision_object1);
+
+
+  ROS_INFO("Adding the object into the world");
+  
+  planning_scene_msg.is_diff = true;
+  planning_scene_diff_publisher.publish(planning_scene_msg);
 
     ros::Duration(2).sleep();
 
@@ -312,7 +470,7 @@ int main(int argc, char** argv) {
 
 
     tempTime += response.planning_time;
-
+    avgSeedTime += tempTime;
 
     // UNCOMMENT the following if you wish to display seed trajectory
     // ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -322,7 +480,9 @@ int main(int argc, char** argv) {
 
 
     //Displays the Cost
-    ROS_INFO("Seed Cost :: %f",determineCost(&(response.trajectory.joint_trajectory)));
+    double seedCost = determineCost(&(response.trajectory.joint_trajectory));
+    avgSeedCost += seedCost;
+    ROS_INFO_STREAM("Seed Cost :: " + std::to_string(seedCost));
 
     
     /* We can also use visual_tools to wait for user input */
@@ -467,9 +627,9 @@ int main(int argc, char** argv) {
       display_publisher_stomp.publish(display_trajectory_stomp);
 
 
-
-
-      ROS_INFO("STOMP Cost :: %f",determineCost(&(response.trajectory.joint_trajectory)));
+      double STOMPCost = determineCost(&(response.trajectory.joint_trajectory));
+      avgSTOMPCost += STOMPCost;
+      ROS_INFO_STREAM("Final Plan Cost :: " + std::to_string(STOMPCost));
 
 
     } else {
@@ -506,14 +666,17 @@ int main(int argc, char** argv) {
     ROS_INFO_STREAM(main_loop_iter);
 
   }
-
+  avgSeedTime = avgSeedTime/(max_Iter-numSeedFails);
+  avgSeedCost = avgSeedCost/(max_Iter-numSeedFails);
   avgTime = avgTime/(max_Iter-numStompFails);
-  ROS_INFO_STREAM("Average Time ::");
-  ROS_INFO_STREAM(avgTime);
-  ROS_INFO_STREAM("Number of STOMP failures");
-  ROS_INFO_STREAM(numStompFails);
-  ROS_INFO_STREAM("Number of SEED failures");
-  ROS_INFO_STREAM(numSeedFails);
+  avgSTOMPCost = avgSTOMPCost/(max_Iter-numStompFails);
+
+  ROS_INFO_STREAM("Average BFMT* Time :: " +std::to_string(avgSeedTime));
+  ROS_INFO_STREAM("Average BFMT*+STOMP Time :: "+std::to_string(avgTime));
+  ROS_INFO_STREAM("Average BFMT* Cost :: " +std::to_string(avgSeedCost));
+  ROS_INFO_STREAM("Average BFMT*+STOMP Cost :: " + std::to_string(avgSTOMPCost));
+  ROS_INFO_STREAM("Number of STOMP failures :: "+std::to_string(numStompFails));
+  ROS_INFO_STREAM("Number of SEED failures :: "+std::to_string(numSeedFails));
 
 }
 

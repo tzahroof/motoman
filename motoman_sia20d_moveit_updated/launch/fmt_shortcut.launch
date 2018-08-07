@@ -20,8 +20,9 @@
   </include>
 
 <node name="fmt_shortcut" pkg="motoman_sia20d_moveit_updated" type="fmt_shortcut" respawn="false" launch-prefix="" output="screen">
-    <param name="allowed_planning_time" value="7" />
-    <param name="max_Iter" value = "100" />
+    <param name="allowed_planning_time" value="3" />
+    <param name="max_Iter" value = "10" />
+    <param name="shortcut" value="Adaptive" />
     <param name="max_EdgeLength_Discretization" value="0.1" />
     <param name="max_EdgeLength_Waypoint_Injection" value="0.2" />
     <param name="sbp_plugin" value="ompl_interface/OMPLPlanner"/>
