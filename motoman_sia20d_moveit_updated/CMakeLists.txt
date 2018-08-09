@@ -49,9 +49,13 @@ catkin_package(
     EIGEN3
 )
 
+
+
 include_directories(SYSTEM ${THIS_PACKAGE_INCLUDE_DIRS} ${Boost_INCLUDE_DIR} ${EIGEN3_INCLUDE_DIRS})
 include_directories(${catkin_INCLUDE_DIRS})
 link_directories(${catkin_LIBRARY_DIRS})
+
+include_directories(include ${catkin_INCLUDE_DIRS} ${Boost_INCLUDE_DIR} ${EIGEN3_INCLUDE_DIRS})
 
 add_executable(fmt_shortcut src/fmt_shortcut.cpp)
 target_link_libraries(fmt_shortcut ${catkin_LIBRARIES} ${Boost_LIBRARIES})
