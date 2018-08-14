@@ -1,0 +1,9 @@
+<launch>
+<node name="fmt" pkg="motoman_sia20d_moveit_updated" type="fmt" respawn="false" launch-prefix="" output="screen">
+    <param name="allowed_planning_time" value="3" />
+    <param name="max_Iter" value = "200" />
+    <param name="environment" value="clutter" />
+</node>
+
+</launch>
+

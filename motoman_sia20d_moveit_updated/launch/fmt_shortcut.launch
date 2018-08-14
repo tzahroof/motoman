@@ -22,12 +22,12 @@
 <node name="fmt_shortcut" pkg="motoman_sia20d_moveit_updated" type="fmt_shortcut" respawn="false" launch-prefix="" output="screen">
     <param name="allowed_planning_time" value="3" />
     <param name="max_Iter" value = "200" />
-    <param name="shortcut" value="Adaptive" />
+    <param name="shortcut" value="Partial" />
     <param name="numShortcutLoops" value="100" />
     <param name="max_EdgeLength_Discretization" value="0.1" />
     <param name="max_EdgeLength_Waypoint_Injection" value="0.2" />
     <param name="sbp_plugin" value="ompl_interface/OMPLPlanner"/>
-    <param name="environment" value="box" />
+    <param name="environment" value="clutter" />
     <param name="adaptive_repetitions" value="5" />
     <rosparam command="load" file="$(find motoman_sia20d_moveit_updated)/config/kinematics.yaml"/>
     <rosparam command="load" file="$(find motoman_sia20d_moveit_updated)/config/ompl_planning.yaml"/>

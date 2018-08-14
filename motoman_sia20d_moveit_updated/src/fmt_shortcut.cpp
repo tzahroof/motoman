@@ -10,6 +10,9 @@ Motion_plannning_api_tutorial.cpp headers
 #include <pluginlib/class_loader.h>
 #include <ros/ros.h>
 
+/*
+  THIS HEADER FILE has all of the shortcut code. 
+*/
 #include <motoman/motoman_sia20d_moveit_updated/fmt_shortcut.h>
 
 // MoveIt!
@@ -53,352 +56,9 @@ double allowed_planning_time;
 */
 static double determineCost(trajectory_msgs::JointTrajectory *joint_trajectory);
 static void visualizePlot(trajectory_msgs::JointTrajectory *joint_trajectory, ros::Publisher *rqt_publisher);
-static void populatePath(trajectory_msgs::JointTrajectory *joint_trajectory);
 static bool checkIfPathHasCollisions(moveit_msgs::MotionPlanResponse *response, planning_scene::PlanningScenePtr planning_scene,const robot_state::JointModelGroup *joint_model_group, robot_state::RobotState *robot_state);
-static bool clearPath(trajectory_msgs::JointTrajectory *joint_trajectory, planning_scene::PlanningScenePtr planning_scene,const robot_state::JointModelGroup *joint_model_group, robot_state::RobotState *robot_state, int a, int b, int defaultNumPoints);
-static double Shortcut(trajectory_msgs::JointTrajectory *joint_trajectory, planning_scene::PlanningScenePtr *planning_scene, const robot_state::JointModelGroup *joint_model_group, robot_state::RobotState *robot_state, int numShortcutLoops, int defaultNumPoints);
 static double timeParameterize(moveit_msgs::MotionPlanResponse *response, robot_model::RobotModelPtr robot_model, robot_state::RobotState *start_state);
-static Eigen::VectorXd determineCostVector(trajectory_msgs::JointTrajectory *joint_trajectory);
-static bool clearPathPartial(trajectory_msgs::JointTrajectory *joint_trajectory, planning_scene::PlanningScenePtr planning_scene,const robot_state::JointModelGroup *joint_model_group, robot_state::RobotState *robot_state, int a, int b, int dof);
-static double randomNumber(double lower_bound, double upper_bound);
-
-/*
-
-Function: selectDof()
-
-Purpose: Selects a degree-of-freedom to perform partial shortcut method based on AWD (Weight Distribution of Joints). Currently selects only 1 joint.
-         Sums the weights of AWD to randomly select a degree-
-
-*/
- 
-
-static int selectDOF(Eigen::VectorXd AWD)
-{
-  double sumOfWeights = 0;
-  for(int i = 0; i < AWD.size(); i++)
-  {
-    sumOfWeights += AWD(i);
-  }
-  double rnd = randomNumber(0,sumOfWeights);
-  for(int i = 0; i < AWD.size(); i++)
-  {
-    if(rnd < AWD(i))
-    {
-      return i; 
-    } else
-    {
-      rnd -= AWD(i);
-    }
-  }
-
-  return -1; //we should never get here
-
-}
-
-static Eigen::VectorXd genAWD(Eigen::VectorXd refCost, trajectory_msgs::JointTrajectory *joint_trajectory)
-{
-  Eigen::VectorXd currentCost = determineCostVector(joint_trajectory);
-  return (currentCost-refCost).cwiseAbs();
-}
-
-
-static double PartialShortcut(trajectory_msgs::JointTrajectory *joint_trajectory, planning_scene::PlanningScenePtr *planning_scene, const robot_state::JointModelGroup *joint_model_group, robot_state::RobotState *robot_state, int numShortcutLoops)
-{
-  //Ensures that we have a valid Partial Shortcut Method name entered into the .yaml
-  if(shortcutMethod != "Partial")
-  {
-    shortcutMethod = "AdaptivePartial";
-  }
-  ROS_INFO("Using %s Shortcut to clean up the trajectory",shortcutMethod.c_str());
-  double time = ros::Time::now().toSec();
-  std::vector<trajectory_msgs::JointTrajectoryPoint>::size_type trajSize = joint_trajectory->points.size();
-  std::vector<double>::size_type numberDOFs = joint_trajectory->points[0].positions.size();;
-
-  //Ensure that the trajectory is valid.
-  if(joint_trajectory== nullptr || joint_trajectory->points.size() == 0)
-  {
-    return -1;
-  }
-
-  //Determine reference cost. This is cost from start to goal assuming no collisions. It is a vector.
-  Eigen::VectorXd refCostVector(joint_trajectory->points[0].positions.size());
-  for(int i = 0; i < refCostVector.size(); i++)
-  {
-    refCostVector(i) = joint_trajectory->points.back().positions[i] - joint_trajectory->points[0].positions[i];
-  }
-
-  //begin main algorithm loop
-  for(int loop_iter = 0; loop_iter < numShortcutLoops; loop_iter++) //TODO: Change 1 to numShortcutLoops
-  {
-    int dof;
-    if(shortcutMethod == "Partial")
-    {
-      dof = (int)randomNumber(0,numberDOFs);
-    } else 
-    {
-      Eigen::VectorXd AWD = genAWD(refCostVector, joint_trajectory);
-      dof = selectDOF(AWD);
-    }
-    
-
-
-    int a; //variable marking random waypoint (beginning)
-    int b; //variable marking random waypoint (end) -> attempt to connect a to b
-
-    if(trajSize <= 2)
-    {
-      ROS_INFO_STREAM("Trajectory has "+std::to_string(trajSize)+" points\n");
-      break; //trajectory has been reduced to a straightline between two points, is just a single point, or doesn't have any points
-    }
-    else if(trajSize == 3)
-    {
-      a = 0; //special case to prevent modulus by 0
-      b = 2;
-    }
-    else 
-    {
-
-      a = rand()%(trajSize-3); //returns a value between 0 and the third-to-last element (b can be from 0 -> last element)
-      b = rand()%(trajSize);
-
-      while(!(b > a && (b-a) > 1)) 
-      { 
-       b = rand()%(trajSize); //ensures that index b is after a
-      }
-
-    }
-
-    //The following calculates the cost of improvement of the degree of freedom
-    //Ensures that there is improvement to prevent re-doing an already improved part (checking for collisions is intensive)
-
-    double refCostab = 0.0;
-    for(unsigned iter = a; iter < b; iter++) {
-        refCostab += 
-          fabs((joint_trajectory->points[iter+1].positions[dof] - joint_trajectory->points[iter].positions[dof]));
-    }        
-
-    double costOfImprovement = fabs(joint_trajectory->points[b].positions[dof] - joint_trajectory->points[a].positions[dof]);
-
-
-    //the straightline cost improves the trajectory, so we are going to check if the path is valid
-    if(costOfImprovement < refCostab)
-    {
-      if(clearPathPartial(joint_trajectory, *planning_scene,joint_model_group, robot_state, a, b, dof)) {
-        //Officially change the joint
-
-        //check to see whether we actually replaced the points
-
-        double increment = (joint_trajectory->points[b].positions[dof] - joint_trajectory->points[a].positions[dof])/(b-a);
-        for(int i = 0; i <= b-a; i++)
-        {
-          joint_trajectory->points[a+i].positions[dof] = joint_trajectory->points[a].positions[dof] + increment*i;
-        }
-
-      }
-    }
-  }
-  return ros::Time::now().toSec() - time;
-
-}
-
-static void addObstacles(planning_scene::PlanningScenePtr planning_scene, ros::Publisher *planning_scene_diff_publisher, moveit_msgs::PlanningScene *planning_scene_msg, std::string environment)
-{
-  if(environment == "box")
-  {
-    //SQUARE BOX
-    //^^^^^^^^^^^
-    moveit_msgs::CollisionObject collision_object;
-
-    shape_msgs::SolidPrimitive primitive;
-    primitive.type = primitive.BOX;
-    primitive.dimensions.resize(3);
-    primitive.dimensions[0] = 0.2;
-    primitive.dimensions[1] = 0.4;
-    primitive.dimensions[2] = 0.4;
-
-    geometry_msgs::Pose box_pose;
-    box_pose.orientation.w = 1.0;
-    box_pose.position.x = 0.35;
-    box_pose.position.y = 0.1;
-    box_pose.position.z = 0.9;
-
-    collision_object.primitives.push_back(primitive);
-    collision_object.primitive_poses.push_back(box_pose);
-    collision_object.operation = collision_object.ADD;
-    collision_object.header.frame_id = "/base_link";
-    planning_scene_msg->world.collision_objects.push_back(collision_object);
-    planning_scene->processCollisionObjectMsg(collision_object);
-  }
-
-  if(environment == "sphere")
-  {
-    //SPHERE OBJECT
-    //^^^^^^^^^^^^^
-    moveit_msgs::CollisionObject sphere_object;
-
-    shape_msgs::SolidPrimitive sphere_primitive;
-    sphere_primitive.type = sphere_primitive.SPHERE;
-    sphere_primitive.dimensions.resize(1);
-    sphere_primitive.dimensions[0] = 0.1;
-
-    geometry_msgs::Pose sphere_pose;
-    sphere_pose.orientation.w = 1.0;
-    sphere_pose.position.x = 0.35;
-    sphere_pose.position.y = 0.1;
-    sphere_pose.position.z = 0.9;
-
-    sphere_object.primitives.push_back(sphere_primitive);
-    sphere_object.primitive_poses.push_back(sphere_pose);
-    sphere_object.operation = sphere_object.ADD;
-    sphere_object.header.frame_id = "/base_link";
-    planning_scene_msg->world.collision_objects.push_back(sphere_object);
-    planning_scene->processCollisionObjectMsg(sphere_object);
-  }
-
-  if(environment == "clutter")
-  {
-    //MULTIPLE OBJECTS
-    //^^^^^^^^^^^^^
-    moveit_msgs::CollisionObject sphere_object;
-    sphere_object.id="sphere_object";
-    shape_msgs::SolidPrimitive sphere_primitive;
-    sphere_primitive.type = sphere_primitive.SPHERE;
-    sphere_primitive.dimensions.resize(1);
-    sphere_primitive.dimensions[0] = 0.1;
-
-    geometry_msgs::Pose sphere_pose;
-    sphere_pose.orientation.w = 1.0;
-    sphere_pose.position.x = 0.35;
-    sphere_pose.position.y = 0.1;
-    sphere_pose.position.z = 1.05;
-
-    sphere_object.primitives.push_back(sphere_primitive);
-    sphere_object.primitive_poses.push_back(sphere_pose);
-    sphere_object.operation = sphere_object.ADD;
-    sphere_object.header.frame_id = "/base_link";
-    planning_scene_msg->world.collision_objects.push_back(sphere_object);
-    planning_scene->processCollisionObjectMsg(sphere_object);
-
-
-
-    moveit_msgs::CollisionObject sphere_object2;
-    sphere_object2.id="sphere_object2";
-    shape_msgs::SolidPrimitive sphere_primitive2;
-    sphere_primitive2.type = sphere_primitive2.SPHERE;
-    sphere_primitive2.dimensions.resize(1);
-    sphere_primitive2.dimensions[0] = 0.1;
-
-    geometry_msgs::Pose sphere_pose2;
-    sphere_pose2.orientation.w = 1.0;
-    sphere_pose2.position.x = 0.15;
-    sphere_pose2.position.y = -0.3;
-    sphere_pose2.position.z = 0.9;
-
-    sphere_object2.primitives.push_back(sphere_primitive2);
-    sphere_object2.primitive_poses.push_back(sphere_pose2);
-    sphere_object2.operation = sphere_object2.ADD;
-    sphere_object2.header.frame_id = "/base_link";
-    planning_scene_msg->world.collision_objects.push_back(sphere_object2);
-    planning_scene->processCollisionObjectMsg(sphere_object2);
-
-
-    moveit_msgs::CollisionObject sphere_object3;
-    sphere_object3.id="sphere_object3";
-    shape_msgs::SolidPrimitive sphere_primitive3;
-    sphere_primitive3.type = sphere_primitive3.SPHERE;
-    sphere_primitive3.dimensions.resize(1);
-    sphere_primitive3.dimensions[0] = 0.1;
-
-    geometry_msgs::Pose sphere_pose3;
-    sphere_pose3.orientation.w = 1.0;
-    sphere_pose3.position.x = 0.0;
-    sphere_pose3.position.y = 0.28;
-    sphere_pose3.position.z = 1.5;
-
-    sphere_object3.primitives.push_back(sphere_primitive3);
-    sphere_object3.primitive_poses.push_back(sphere_pose3);
-    sphere_object3.operation = sphere_object3.ADD;
-    sphere_object3.header.frame_id = "/base_link";
-    planning_scene_msg->world.collision_objects.push_back(sphere_object3);
-    planning_scene->processCollisionObjectMsg(sphere_object3);
-
-    moveit_msgs::CollisionObject sphere_object4;
-    sphere_object4.id="sphere_object4";
-    shape_msgs::SolidPrimitive sphere_primitive4;
-    sphere_primitive4.type = sphere_primitive4.SPHERE;
-    sphere_primitive4.dimensions.resize(1);
-    sphere_primitive4.dimensions[0] = 0.1;
-
-    geometry_msgs::Pose sphere_pose4;
-    sphere_pose4.orientation.w = 1.0;
-    sphere_pose4.position.x = 0.0;
-    sphere_pose4.position.y = 0.4;
-    sphere_pose4.position.z = 0.3;
-
-    sphere_object4.primitives.push_back(sphere_primitive4);
-    sphere_object4.primitive_poses.push_back(sphere_pose4);
-    sphere_object4.operation = sphere_object4.ADD;
-    sphere_object4.header.frame_id = "/base_link";
-    planning_scene_msg->world.collision_objects.push_back(sphere_object4);
-    planning_scene->processCollisionObjectMsg(sphere_object4);
-
-
-    moveit_msgs::CollisionObject collision_object;
-    collision_object.id="collision_object";
-    shape_msgs::SolidPrimitive primitive;
-    primitive.type = primitive.BOX;
-    primitive.dimensions.resize(3);
-    primitive.dimensions[0] = 0.1;
-    primitive.dimensions[1] = 0.5;
-    primitive.dimensions[2] = 0.05;
-
-    geometry_msgs::Pose box_pose;
-    box_pose.orientation.w = 1.0;
-    box_pose.position.x = 0.4;
-    box_pose.position.y = 0.15;
-    box_pose.position.z = 0.83;
-
-    collision_object.primitives.push_back(primitive);
-    collision_object.primitive_poses.push_back(box_pose);
-    collision_object.operation = collision_object.ADD;
-    collision_object.header.frame_id = "/base_link";
-    planning_scene_msg->world.collision_objects.push_back(collision_object);
-    planning_scene->processCollisionObjectMsg(collision_object);
-
-    moveit_msgs::CollisionObject collision_object1;
-    collision_object1.id="collision_object1";
-    shape_msgs::SolidPrimitive primitive1;
-    primitive1.type = primitive1.BOX;
-    primitive1.dimensions.resize(3);
-    primitive1.dimensions[0] = 0.15;
-    primitive1.dimensions[1] = 0.15;
-    primitive1.dimensions[2] = 0.15;
-
-    geometry_msgs::Pose box_pose1;
-    box_pose1.orientation.w = 1.0;
-    box_pose1.position.x = 0.0;
-    box_pose1.position.y = 0.45;
-    box_pose1.position.z = 0.85;
-
-    collision_object1.primitives.push_back(primitive1);
-    collision_object1.primitive_poses.push_back(box_pose1);
-    collision_object1.operation = collision_object1.ADD;
-    collision_object1.header.frame_id = "/base_link";
-    planning_scene_msg->world.collision_objects.push_back(collision_object1);
-    planning_scene->processCollisionObjectMsg(collision_object1);
-  }
-
-
-  ROS_INFO("Adding the object into the world");
-  
-  planning_scene_msg->is_diff = true;
-  planning_scene_diff_publisher->publish(*planning_scene_msg);
-
-
-  ros::Duration(1).sleep();
-}
-
-
+static void addObstacles(planning_scene::PlanningScenePtr planning_scene, ros::Publisher *planning_scene_diff_publisher, moveit_msgs::PlanningScene *planning_scene_msg, std::string environment);
 
 /*
 
@@ -564,11 +224,11 @@ int main(int argc, char** argv) {
     ROS_INFO_STREAM("About to enter 5 seconds of sleep to let startup occur properly");
     ros::Duration(5).sleep();
 
+    addObstacles(planning_scene, &planning_scene_diff_publisher, &planning_scene_msg,environment);
+
    // UNCOMMENT the following line  to only start the program upon button press
    // ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    // visual_tools.prompt("Press 'next' in the RvizVisualToolsGui window to start the demo. Make sure to add the button via the Panels menu in the top bar.");
-
-    addObstacles(planning_scene, &planning_scene_diff_publisher, &planning_scene_msg,environment);
 
   for(int main_loop_iter = 0; main_loop_iter <max_Iter; main_loop_iter++) { //change number of iterations
 
@@ -786,9 +446,7 @@ int main(int argc, char** argv) {
       ROS_INFO_STREAM("Pre-processing size :: " + std::to_string(response.trajectory.joint_trajectory.points.size()));
       if(shortcutMethod == "AdaptivePartial" || shortcutMethod == "Partial")
       {
-        //TODO: Add averageTime code here :)
         avgTime += shortcut_planner->PartialShortcut(&(response.trajectory.joint_trajectory), &planning_scene, joint_model_group, &(*robot_state), numShortcutLoops);
-
       } else if(shortcutMethod == "Regular") { //has to be regular Shortcut
         avgTime +=  shortcut_planner->RegularShortcut(&(response.trajectory.joint_trajectory),&planning_scene,joint_model_group,&(*robot_state),numShortcutLoops,3);
       } else if(shortcutMethod == "Adaptive") {
@@ -856,188 +514,6 @@ int main(int argc, char** argv) {
 
 }
 
-/*
-
-Function: Shortcut
-
-
-Purpose: Uses the shortcut method to prune the tree. Essentially, it tries to connect to random nodes in a trajectory with a straight line. If the two nodes have a clear path, then we remove all nodes
-         in between those two random nodes, as a straight line path is the most efficient way to connect two nodes.
-
-
-*/
-
-
-static double Shortcut(trajectory_msgs::JointTrajectory *joint_trajectory, planning_scene::PlanningScenePtr *planning_scene, const robot_state::JointModelGroup *joint_model_group, robot_state::RobotState *robot_state, int numShortcutLoops, int defaultNumPoints)
-{
-  double time = ros::Time::now().toSec();
-
-  int startingNumPoints = joint_trajectory->points.size();
-
-  for(int loop_iter = 0; loop_iter < numShortcutLoops; loop_iter++) 
-  {
-    std::vector<int>::size_type trajSize = joint_trajectory->points.size();
-
-    int a;
-    int b;
-
-    if(trajSize <= 2)
-    {
-      ROS_INFO_STREAM("Trajectory has "+std::to_string(trajSize)+" points\n");
-      break; //trajectory has been reduced to a straightline between two points, is just a single point, or doesn't have any points
-    }
-    else if(trajSize == 3)
-    {
-      a = 0; //special case to prevent modulus by 0
-      b = 2;
-    }
-    else 
-    {
-      a = rand()%(trajSize-3); //returns a value between 0 and the third-to-last element (b can be from 0 -> last element)
-      b = rand()%(trajSize);
-
-      while(!(b > a && (b-a) > 1)) { 
-      b = rand()%(trajSize); //ensures that index b is after a
-    }
-    }
-
-    if(clearPath(joint_trajectory, *planning_scene, joint_model_group, robot_state, a, b, defaultNumPoints)) //straightline path is clear; therefore remove all nodes in between
-    {
-      joint_trajectory->points.erase(joint_trajectory->points.begin()+a+1, joint_trajectory->points.begin()+b);
-    }
-  }
-  int postShortcutNumPoints = joint_trajectory->points.size();
-
-  populatePath(joint_trajectory);
-  int postPopulatePoints = joint_trajectory->points.size();
-
-  ROS_INFO("Shortcut method: %d -> %d -> %d points",startingNumPoints, postShortcutNumPoints, postPopulatePoints );
-  return ros::Time::now().toSec()-time;
-}
-
-
-/*
-
-Function: clearPath
-
-
-Purpose: Determines if the path between two nodes is clear. It begins by discretizing the the path between two nodes
-         until the edgelength is between them is 1.0. Then, the collision checker checks each node (effectively, a robot
-         state) to see if said state is in collision. Returns true if the path is collision-free.
-*/
-    
-
-
-static bool clearPath(trajectory_msgs::JointTrajectory *joint_trajectory, planning_scene::PlanningScenePtr planning_scene,const robot_state::JointModelGroup *joint_model_group, robot_state::RobotState *robot_state, int a, int b, int defaultNumPoints)
-{
-  int numPoints = defaultNumPoints;
-  int a_size = joint_trajectory->points[a].positions.size();
-  int b_size = joint_trajectory->points[b].positions.size();
-  if(a_size != b_size)
-  {
-    ROS_ERROR_STREAM("The number of joints of a and b in Clear Path are not equal ");
-    return false;
-  }
-  
-  // Use Eigen::VectorXd for easy vector math
-  Eigen::VectorXd APoints(joint_trajectory->points[a].positions.size());
-  
-  for(int i = 0; i < a_size; i++)
-  {
-    APoints(i) = (joint_trajectory->points[a].positions[i]);
-  }
-
-  Eigen::VectorXd BPoints(joint_trajectory->points[b].positions.size());
-  for(int i = 0; i < b_size; i++)
-  {
-    BPoints(i) = joint_trajectory->points[b].positions[i];
-  }
-
-
-
-  bool notDoneFlag = true;
-  double oldnorm = 0.0; //REMOVE when debug code is removed
-
-  // If the edgelength between the discretized nodes is less than 1.0, then we need more points betweeen the waypoints.
-  while(notDoneFlag) 
-  {
-
-    if(  ((BPoints - APoints) /(numPoints-1)).norm() <= max_EdgeLength_Discretization   )
-    {
-      notDoneFlag = false;
-    } 
-    else
-    {
-      numPoints = numPoints * 2;
-    }
-  }
-
-  // Sets up a collision check for each of the nodes of the dicretized path. Then uses the 
-  // collision_detection::CollisionRequest object to check if the state is in collision.
-  for(int i = 0; i <= numPoints-1; i++) 
-  {
-    Eigen::VectorXd substateVector = APoints + (BPoints - APoints)/(numPoints-1) * i;
-
-
-    collision_detection::CollisionRequest c_req;
-    collision_detection::CollisionResult c_res;
-    c_req.group_name = PLANNING_GROUP; //replace this for improved modularity later
-    c_req.contacts = true;
-    c_req.max_contacts = 100;
-    c_req.max_contacts_per_pair = 5;
-    c_req.verbose = false;
-    std::vector<double> substate_joint_vals(&substateVector[0], substateVector.data()+substateVector.cols()*substateVector.rows());
-
-    robot_state->setJointGroupPositions(joint_model_group,substate_joint_vals);
-
-    planning_scene ->checkCollision(c_req,c_res, *robot_state);
-
-    if(c_res.collision)
-    {
-      return false;
-    }
-
-  }
-  return true;
-}
-
-/*
-
-Function: populatePath
-
-
-Purpose: After a path is generated by Shortcut, the number of waypoints may potentially be way too few to be useful
-         for generating useful velocity/acceleration parameters from start to finish. As such, this method adds
-         waypoint markers in a straight-line between the nodes of the original trajectory to allow for better
-         post-plan time parameterization
-
-
-*/
-
-static void populatePath(trajectory_msgs::JointTrajectory *joint_trajectory)
-{
-  std::vector<trajectory_msgs::JointTrajectoryPoint> *points;
-  points = &(joint_trajectory->points);
-  std::vector<int>::size_type trajSize = points->size();
-  std::vector<trajectory_msgs::JointTrajectoryPoint>::iterator firstIndex = points->begin();
-
-  for(int i = 0; i < trajSize-1; i++)
-  {
-     Eigen::VectorXd firstVec = Eigen::Map<Eigen::VectorXd, Eigen::Unaligned>((*points)[i].positions.data(),(*points)[i].positions.size());
-     Eigen::VectorXd secondVec = Eigen::Map<Eigen::VectorXd, Eigen::Unaligned>((*points)[i+1].positions.data(),(*points)[i+1].positions.size());
-     
-     if((secondVec-firstVec).norm() > max_EdgeLength_Waypoint_Injection)
-     {
-       Eigen::VectorXd unitVec = firstVec + ((secondVec-firstVec)/(secondVec-firstVec).norm()) * 0.1;
-       points->insert(firstIndex+i+1,trajectory_msgs::JointTrajectoryPoint());
-       std::vector<double> intermediatePositions(&unitVec[0], unitVec.data()+unitVec.cols()*unitVec.rows());
-       (*points)[i+1].positions = intermediatePositions;
-
-       trajSize =points->size();
-       firstIndex = points->begin();
-     }
-  }
-}
 
 
 /*
@@ -1072,108 +548,6 @@ static double timeParameterize(moveit_msgs::MotionPlanResponse *response, robot_
 
 }
 
-/*
-
-Function: clearPathPartial
-
-
-Purpose: Checks whether a path is collision-free by interpolating a specific degree of freedom between two specified waypoints
-
-
-*/
-
-static bool clearPathPartial(trajectory_msgs::JointTrajectory *joint_trajectory, planning_scene::PlanningScenePtr planning_scene,const robot_state::JointModelGroup *joint_model_group, robot_state::RobotState *robot_state, int a, int b, int dof)
-{
-  int a_size = joint_trajectory->points[a].positions.size();
-  int b_size = joint_trajectory->points[b].positions.size();
-
-  std::vector<double>::size_type numberDOFs = joint_trajectory->points[0].positions.size();
-
-  if(a_size != b_size)
-  {
-    ROS_ERROR_STREAM("The number of joints of a and b in Clear Path are not equal ");
-    return false;
-  }
-  
-
-  double increment = (joint_trajectory->points[b].positions[dof] - joint_trajectory->points[a].positions[dof])/(b-a);
-
-
-  // Sets up a collision check for each of the nodes of the discretized path. Then uses the 
-  // collision_detection::CollisionRequest object to check if the state is in collision.
-  for(int i = 0; i <= b-a; i++) 
-  {
-    Eigen::VectorXd substateVector(numberDOFs);
-    //Eigen::VectorXd substateVector = APoints + (BPoints - APoints)/(numPoints-1) * i;
-    for(int j = 0; j < numberDOFs;j++)
-    {
-      substateVector(j) = joint_trajectory->points[a+i].positions[j];
-    }
-    //interpolate the selected dof over the waypoints from a -> b
-    substateVector(dof) = joint_trajectory->points[a].positions[dof] + increment*i;
-
-    collision_detection::CollisionRequest c_req;
-    collision_detection::CollisionResult c_res;
-    c_req.group_name = PLANNING_GROUP; //replace this for improved modularity later
-    c_req.contacts = true;
-    c_req.max_contacts = 100;
-    c_req.max_contacts_per_pair = 5;
-    c_req.verbose = false;
-    std::vector<double> substate_joint_vals(&substateVector[0], substateVector.data()+substateVector.cols()*substateVector.rows());
-
-    robot_state->setJointGroupPositions(joint_model_group,substate_joint_vals);
-
-    planning_scene ->checkCollision(c_req,c_res, *robot_state);
-
-
-    if(c_res.collision)
-    {
-      return false;
-    }
-
-  }
-  return true;
-}
-
-
-/*
-Function: randomNumber()
-
-Purpose: Selects a random number between two bounds
-
-*/
-
-static double randomNumber(double lower_bound, double upper_bound)
-{
-  return (double)rand()/RAND_MAX*(upper_bound-lower_bound)+lower_bound;
-}
-
-
-/*
-
-Function: determineCostVector
-
-
-Purpose: Simple function that prints out the cost of a trajectory. Returns a Vector of the distance each joint traveled
-
-
-*/
-
-static Eigen::VectorXd determineCostVector(trajectory_msgs::JointTrajectory *joint_trajectory)
-{
-    std::vector<int>::size_type numJointsTariq = joint_trajectory->points[0].positions.size();
-    std::vector<int>::size_type size1 = joint_trajectory->points.size();
-    Eigen::VectorXd returnCostVector(joint_trajectory -> points[0].positions.size());
-    for(unsigned j = 0; j < numJointsTariq; j++) {
-      double costOfCurrentMovement = 0;
-      for(unsigned iter = 0; iter < size1-1; iter++) {
-            costOfCurrentMovement += 
-              fabs((joint_trajectory->points[iter+1].positions[j] - joint_trajectory->points[iter].positions[j]));
-      }
-      returnCostVector(j) = (costOfCurrentMovement);
-    }
-    return returnCostVector;
-}
 
 /*
 
@@ -1205,58 +579,6 @@ static double determineCost(trajectory_msgs::JointTrajectory *joint_trajectory)
 }
 
 
-/*
-
-Function: checkIfPathHasCollisions
-
-
-Purpose: Uses both the created Collision Checker (created by Tariq, not the MoveIt! one) and also
-         double-checks the waypoints to see if the generated path creates collisions. Returns true if
-         there is a collision
-*/
-
-static bool checkIfPathHasCollisions(moveit_msgs::MotionPlanResponse *response, planning_scene::PlanningScenePtr planning_scene,const robot_state::JointModelGroup *joint_model_group, robot_state::RobotState *robot_state)
-{
-  bool pass = false;
-
-  //Goes through the path and checks if there are collisions between the waypoints (inclusive)
-  for(int i = 0; i < response->trajectory.joint_trajectory.points.size()-1;i++)
-  {
-    if(clearPath(&(response->trajectory.joint_trajectory), planning_scene, joint_model_group, robot_state, i, i+1, 3) == false)
-    {
-      ROS_INFO_STREAM("Found a collision by standard collision checking");
-      pass = true;
-    }
-  }
-
-
-  // Checks if only the waypoints are in collision. Useful if one is unsure if the MoveIt!-generated trajectory
-  // is clean.
-  for(int i = 0; i < response->trajectory.joint_trajectory.points.size(); i++)
-  {
-
-    collision_detection::CollisionRequest c_req;
-    collision_detection::CollisionResult c_res;
-    c_req.group_name = PLANNING_GROUP; //replace this for improved modularity later
-    c_req.contacts = true;
-    c_req.max_contacts = 100;
-    c_req.max_contacts_per_pair = 5;
-    c_req.verbose = false;
-
-    robot_state->setJointGroupPositions(joint_model_group,response->trajectory.joint_trajectory.points[i].positions);
-
-    planning_scene ->checkCollision(c_req,c_res, *robot_state);
-
-    if(c_res.collision)
-    {
-      ROS_INFO_STREAM("WayPoint Checker also found a collision...");
-    }
-
-  }
-
-  return pass;
-}
-
   /*
   
   Function: visualizePlot
@@ -1280,4 +602,210 @@ static void visualizePlot(trajectory_msgs::JointTrajectory *joint_trajectory, ro
     // }
     rqt_publisher->publish(*joint_trajectory);
 
+}
+
+  /*
+  
+  Function: addObstacles
+
+
+  Purpose: Adds preset obstacle environments to the planning scene
+  */
+
+
+static void addObstacles(planning_scene::PlanningScenePtr planning_scene, ros::Publisher *planning_scene_diff_publisher, moveit_msgs::PlanningScene *planning_scene_msg, std::string environment)
+{
+  if(environment == "box")
+  {
+    //SQUARE BOX
+    //^^^^^^^^^^^
+    moveit_msgs::CollisionObject collision_object;
+
+    shape_msgs::SolidPrimitive primitive;
+    primitive.type = primitive.BOX;
+    primitive.dimensions.resize(3);
+    primitive.dimensions[0] = 0.2;
+    primitive.dimensions[1] = 0.4;
+    primitive.dimensions[2] = 0.4;
+
+    geometry_msgs::Pose box_pose;
+    box_pose.orientation.w = 1.0;
+    box_pose.position.x = 0.35;
+    box_pose.position.y = 0.1;
+    box_pose.position.z = 0.9;
+
+    collision_object.primitives.push_back(primitive);
+    collision_object.primitive_poses.push_back(box_pose);
+    collision_object.operation = collision_object.ADD;
+    collision_object.header.frame_id = "/base_link";
+    planning_scene_msg->world.collision_objects.push_back(collision_object);
+    planning_scene->processCollisionObjectMsg(collision_object);
+  }
+
+  if(environment == "sphere")
+  {
+    //SPHERE OBJECT
+    //^^^^^^^^^^^^^
+    moveit_msgs::CollisionObject sphere_object;
+
+    shape_msgs::SolidPrimitive sphere_primitive;
+    sphere_primitive.type = sphere_primitive.SPHERE;
+    sphere_primitive.dimensions.resize(1);
+    sphere_primitive.dimensions[0] = 0.1;
+
+    geometry_msgs::Pose sphere_pose;
+    sphere_pose.orientation.w = 1.0;
+    sphere_pose.position.x = 0.35;
+    sphere_pose.position.y = 0.1;
+    sphere_pose.position.z = 0.9;
+
+    sphere_object.primitives.push_back(sphere_primitive);
+    sphere_object.primitive_poses.push_back(sphere_pose);
+    sphere_object.operation = sphere_object.ADD;
+    sphere_object.header.frame_id = "/base_link";
+    planning_scene_msg->world.collision_objects.push_back(sphere_object);
+    planning_scene->processCollisionObjectMsg(sphere_object);
+  }
+
+  if(environment == "clutter")
+  {
+    //MULTIPLE OBJECTS
+    //^^^^^^^^^^^^^
+    moveit_msgs::CollisionObject sphere_object;
+    sphere_object.id="sphere_object";
+    shape_msgs::SolidPrimitive sphere_primitive;
+    sphere_primitive.type = sphere_primitive.SPHERE;
+    sphere_primitive.dimensions.resize(1);
+    sphere_primitive.dimensions[0] = 0.1;
+
+    geometry_msgs::Pose sphere_pose;
+    sphere_pose.orientation.w = 1.0;
+    sphere_pose.position.x = 0.35;
+    sphere_pose.position.y = 0.1;
+    sphere_pose.position.z = 1.05;
+
+    sphere_object.primitives.push_back(sphere_primitive);
+    sphere_object.primitive_poses.push_back(sphere_pose);
+    sphere_object.operation = sphere_object.ADD;
+    sphere_object.header.frame_id = "/base_link";
+    planning_scene_msg->world.collision_objects.push_back(sphere_object);
+    planning_scene->processCollisionObjectMsg(sphere_object);
+
+
+
+    moveit_msgs::CollisionObject sphere_object2;
+    sphere_object2.id="sphere_object2";
+    shape_msgs::SolidPrimitive sphere_primitive2;
+    sphere_primitive2.type = sphere_primitive2.SPHERE;
+    sphere_primitive2.dimensions.resize(1);
+    sphere_primitive2.dimensions[0] = 0.1;
+
+    geometry_msgs::Pose sphere_pose2;
+    sphere_pose2.orientation.w = 1.0;
+    sphere_pose2.position.x = 0.15;
+    sphere_pose2.position.y = -0.3;
+    sphere_pose2.position.z = 0.9;
+
+    sphere_object2.primitives.push_back(sphere_primitive2);
+    sphere_object2.primitive_poses.push_back(sphere_pose2);
+    sphere_object2.operation = sphere_object2.ADD;
+    sphere_object2.header.frame_id = "/base_link";
+    planning_scene_msg->world.collision_objects.push_back(sphere_object2);
+    planning_scene->processCollisionObjectMsg(sphere_object2);
+
+
+    moveit_msgs::CollisionObject sphere_object3;
+    sphere_object3.id="sphere_object3";
+    shape_msgs::SolidPrimitive sphere_primitive3;
+    sphere_primitive3.type = sphere_primitive3.SPHERE;
+    sphere_primitive3.dimensions.resize(1);
+    sphere_primitive3.dimensions[0] = 0.1;
+
+    geometry_msgs::Pose sphere_pose3;
+    sphere_pose3.orientation.w = 1.0;
+    sphere_pose3.position.x = 0.0;
+    sphere_pose3.position.y = 0.28;
+    sphere_pose3.position.z = 1.5;
+
+    sphere_object3.primitives.push_back(sphere_primitive3);
+    sphere_object3.primitive_poses.push_back(sphere_pose3);
+    sphere_object3.operation = sphere_object3.ADD;
+    sphere_object3.header.frame_id = "/base_link";
+    planning_scene_msg->world.collision_objects.push_back(sphere_object3);
+    planning_scene->processCollisionObjectMsg(sphere_object3);
+
+    moveit_msgs::CollisionObject sphere_object4;
+    sphere_object4.id="sphere_object4";
+    shape_msgs::SolidPrimitive sphere_primitive4;
+    sphere_primitive4.type = sphere_primitive4.SPHERE;
+    sphere_primitive4.dimensions.resize(1);
+    sphere_primitive4.dimensions[0] = 0.1;
+
+    geometry_msgs::Pose sphere_pose4;
+    sphere_pose4.orientation.w = 1.0;
+    sphere_pose4.position.x = 0.0;
+    sphere_pose4.position.y = 0.4;
+    sphere_pose4.position.z = 0.3;
+
+    sphere_object4.primitives.push_back(sphere_primitive4);
+    sphere_object4.primitive_poses.push_back(sphere_pose4);
+    sphere_object4.operation = sphere_object4.ADD;
+    sphere_object4.header.frame_id = "/base_link";
+    planning_scene_msg->world.collision_objects.push_back(sphere_object4);
+    planning_scene->processCollisionObjectMsg(sphere_object4);
+
+
+    moveit_msgs::CollisionObject collision_object;
+    collision_object.id="collision_object";
+    shape_msgs::SolidPrimitive primitive;
+    primitive.type = primitive.BOX;
+    primitive.dimensions.resize(3);
+    primitive.dimensions[0] = 0.1;
+    primitive.dimensions[1] = 0.5;
+    primitive.dimensions[2] = 0.05;
+
+    geometry_msgs::Pose box_pose;
+    box_pose.orientation.w = 1.0;
+    box_pose.position.x = 0.4;
+    box_pose.position.y = 0.15;
+    box_pose.position.z = 0.83;
+
+    collision_object.primitives.push_back(primitive);
+    collision_object.primitive_poses.push_back(box_pose);
+    collision_object.operation = collision_object.ADD;
+    collision_object.header.frame_id = "/base_link";
+    planning_scene_msg->world.collision_objects.push_back(collision_object);
+    planning_scene->processCollisionObjectMsg(collision_object);
+
+    moveit_msgs::CollisionObject collision_object1;
+    collision_object1.id="collision_object1";
+    shape_msgs::SolidPrimitive primitive1;
+    primitive1.type = primitive1.BOX;
+    primitive1.dimensions.resize(3);
+    primitive1.dimensions[0] = 0.15;
+    primitive1.dimensions[1] = 0.15;
+    primitive1.dimensions[2] = 0.15;
+
+    geometry_msgs::Pose box_pose1;
+    box_pose1.orientation.w = 1.0;
+    box_pose1.position.x = 0.0;
+    box_pose1.position.y = 0.45;
+    box_pose1.position.z = 0.85;
+
+    collision_object1.primitives.push_back(primitive1);
+    collision_object1.primitive_poses.push_back(box_pose1);
+    collision_object1.operation = collision_object1.ADD;
+    collision_object1.header.frame_id = "/base_link";
+    planning_scene_msg->world.collision_objects.push_back(collision_object1);
+    planning_scene->processCollisionObjectMsg(collision_object1);
+  }
+
+
+  ROS_INFO("Adding the object into the world");
+  
+  planning_scene_msg->is_diff = true;
+  planning_scene_diff_publisher->publish(*planning_scene_msg);
+
+
+  ros::Duration(1).sleep();
 }

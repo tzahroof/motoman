@@ -20,11 +20,15 @@
   </include>
 
 <node name="pick_place" pkg="motoman_sia20d_with_gripper_moveit" type="pick_place" respawn="false" launch-prefix="" output="screen">
-    <param name="allowed_planning_time" value="7" />
-    <param name="max_Iter" value = "100" />
+    <param name="allowed_planning_time" value="3" />
+    <param name="max_Iter" value = "50" />
+    <param name="shortcut" value="Adaptive" />
+    <param name="numShortcutLoops" value="100" />
     <param name="max_EdgeLength_Discretization" value="0.1" />
     <param name="max_EdgeLength_Waypoint_Injection" value="0.2" />
     <param name="sbp_plugin" value="ompl_interface/OMPLPlanner"/>
+    <param name="environment" value="clutter" />
+    <param name="adaptive_repetitions" value="5" />
     <rosparam command="load" file="$(find motoman_sia20d_with_gripper_moveit)/config/kinematics.yaml"/>
     <rosparam command="load" file="$(find motoman_sia20d_with_gripper_moveit)/config/ompl_planning.yaml"/>
   </node>

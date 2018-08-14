@@ -64,3 +64,7 @@ install(TARGETS fmt_shortcut DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
 add_executable(fmt_stomp src/fmt_stomp.cpp)
 target_link_libraries(fmt_stomp ${catkin_LIBRARIES} ${Boost_LIBRARIES})
 install(TARGETS fmt_stomp DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
+
+add_executable(fmt src/fmt.cpp)
+target_link_libraries(fmt ${catkin_LIBRARIES} ${Boost_LIBRARIES})
+install(TARGETS fmt DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
