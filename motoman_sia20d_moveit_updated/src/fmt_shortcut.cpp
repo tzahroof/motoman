@@ -87,6 +87,8 @@ int main(int argc, char** argv) {
   double avgSeedCost = 0.0;
   double avgShortcutCost = 0.0;
   std::string environment = "";
+  moveit_msgs::MotionPlanResponse bestResponse;
+  double bestCost = 100000;
 
   // Start
   // ^^^^^
@@ -493,14 +495,28 @@ int main(int argc, char** argv) {
       avgShortcutCost += shortcutCost;
       ROS_INFO_STREAM("Final Plan Cost :: " + std::to_string(shortcutCost));
 
+      //Save the best plan
+      if(shortcutCost < bestCost)
+      {
+        bestResponse.trajectory_start = response.trajectory_start;
+        bestResponse.trajectory = response.trajectory;
+        bestCost = shortcutCost;
+      }
+
     }
     ROS_INFO_STREAM("Current iteration :: "+std::to_string(main_loop_iter));
 
 
     //UNCOMMENT following line if you wish to make code stop here until a button press is received.
-    //visual_tools.prompt("Please press next in the RVizVisualToolsGui to continue. Make sure to add the button via the Panels menu in the top bar.");
+    visual_tools.prompt("Please press next in the RVizVisualToolsGui to continue. Make sure to add the button via the Panels menu in the top bar.");
 
   }
+
+  moveit_msgs::DisplayTrajectory display_trajectory;
+  display_trajectory.trajectory_start = bestResponse.trajectory_start;  //this might suggest why it starts off the wrong way sometimes?
+  display_trajectory.trajectory.clear();
+  display_trajectory.trajectory.push_back(bestResponse.trajectory);
+  display_publisher.publish(display_trajectory);
 
   avgTime = avgTime/(max_Iter-numSeedFails);
   avgSeedTime = avgSeedTime/(max_Iter-numSeedFails);

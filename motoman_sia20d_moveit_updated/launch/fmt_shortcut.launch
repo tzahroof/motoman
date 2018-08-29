@@ -21,7 +21,7 @@
 
 <node name="fmt_shortcut" pkg="motoman_sia20d_moveit_updated" type="fmt_shortcut" respawn="false" launch-prefix="" output="screen">
     <param name="allowed_planning_time" value="3" />
-    <param name="max_Iter" value = "200" />
+    <param name="max_Iter" value = "3" />
     <param name="shortcut" value="Partial" />
     <param name="numShortcutLoops" value="100" />
     <param name="max_EdgeLength_Discretization" value="0.1" />
