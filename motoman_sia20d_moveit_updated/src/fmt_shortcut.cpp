@@ -49,7 +49,7 @@ double max_EdgeLength_Waypoint_Injection; //determines how big the maxEdgeLength
 int defaultNumPoints = 5; //TODO: change this
 int numShortcutLoops = 30;
 int adaptive_repetitions = 5;
-std::string shortcutMethod = "AdaptivePartial";
+std::string shortcutMethod = "Partial";
 double allowed_planning_time;
 /*
   Prototype Functions
@@ -61,15 +61,10 @@ static double timeParameterize(moveit_msgs::MotionPlanResponse *response, robot_
 static void addObstacles(planning_scene::PlanningScenePtr planning_scene, ros::Publisher *planning_scene_diff_publisher, moveit_msgs::PlanningScene *planning_scene_msg, std::string environment);
 
 /*
-
 Function: main()
-
-
 Purpose: This is where the magic happens. Most of the methods are either helper methods or ways to implement
          the shortcut algorithm (which is not natively built into MoveIt!) Check out the motion planning api
          tutorial of MoveIt! online for more information on the basics.
-
-
 */
 
 
@@ -125,7 +120,7 @@ int main(int argc, char** argv) {
     std::string planner_plugin_name;
 
     //Set up a publisher to advertise the JointTrajectories to the graphing tool
-	  ros::Publisher display_publisher = node_handle.advertise<moveit_msgs::DisplayTrajectory>("/move_group/display_planned_path", 1, true);
+    ros::Publisher display_publisher = node_handle.advertise<moveit_msgs::DisplayTrajectory>("/move_group/display_planned_path", 1, true);
     ros::Publisher rqt_publisher = node_handle.advertise<trajectory_msgs::JointTrajectory>("/rqt_publisher/", 1);
     ros::Publisher planning_scene_diff_publisher = node_handle.advertise<moveit_msgs::PlanningScene>("/motoman/planning_scene",1);
     while(planning_scene_diff_publisher.getNumSubscribers() < 1)
@@ -316,7 +311,7 @@ int main(int argc, char** argv) {
    //The following code is used if final joint values are known
    //^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-	  //Explicitly sets start state
+    //Explicitly sets start state
     //Start state explicitly set from SRDF file in config
     //^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
@@ -332,19 +327,29 @@ int main(int argc, char** argv) {
 
 
 
-  	//Explicitly sets goal state
+    //Explicitly sets goal state
     //^^^^^^^^^^^^^^^^^^^^^^^^^^
 
     // UNCOMMENT Code if you want to set goal_state by joint values instead of from SRDF file
     //^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  	// robot_state::RobotState goal_state_fmt(robot_model);
-  	// std::vector<double> joint_values = {-2.0 , 1.05 , 1.30 , -1.0 , -1.9 , 2.1 , 0.0 };
-  	// goal_state_fmt.setJointGroupPositions(joint_model_group, joint_values);
+    // robot_state::RobotState goal_state_fmt(robot_model);
+    // std::vector<double> joint_values = {-2.0 , 1.05 , 1.30 , -1.0 , -1.9 , 2.1 , 0.0 };
+    // goal_state_fmt.setJointGroupPositions(joint_model_group, joint_values);
 
 
+    /*
+        HESHAM, this is the part that you need to change!
+    */
+
+    //creates the robot_state based on the joints in the robot model
     robot_state::RobotState goal_state_fmt(robot_model);
+    //sets a joint configuration by reading "goal_state" joint values detailed in the SRDF file of this package
+    //Objective:: Change this to read from an end-effector
     goal_state_fmt.setToDefaultValues(goal_state_fmt.getJointModelGroup(PLANNING_GROUP),"goal_state");
 
+
+
+    //The following lines of code convert the goal into a format for the solver to interpret
     moveit_msgs::Constraints joint_goal_fmt = kinematic_constraints::constructGoalConstraints(goal_state_fmt, joint_model_group);
     req.goal_constraints.clear();
     req.goal_constraints.push_back(joint_goal_fmt);
@@ -357,6 +362,7 @@ int main(int argc, char** argv) {
         planner_instance->getPlanningContext(planning_scene, req, res.error_code_);
     context->solve(res);
 
+    //note: context->solve(res) solves the motion planning problem. The following if statement says whether a plan was successfully generated or not
 
     bool seedSuccess = true;
 
@@ -371,8 +377,8 @@ int main(int argc, char** argv) {
     if(seedSuccess)
     {
 
-	    moveit_msgs::MotionPlanResponse response;
-	    res.getMessage(response);
+      moveit_msgs::MotionPlanResponse response;
+      res.getMessage(response);
       moveit_msgs::DisplayTrajectory display_trajectory;
 
       avgTime += response.planning_time;
@@ -385,9 +391,9 @@ int main(int argc, char** argv) {
 
       //TODO: Comment the following lines
      //  ROS_INFO("Visualizing the trajectory");
-	    // display_trajectory.trajectory_start = response.trajectory_start;
-	    // display_trajectory.trajectory.push_back(response.trajectory);
-	    // display_publisher.publish(display_trajectory);
+      // display_trajectory.trajectory_start = response.trajectory_start;
+      // display_trajectory.trajectory.push_back(response.trajectory);
+      // display_publisher.publish(display_trajectory);
 
 
 
@@ -419,19 +425,19 @@ int main(int argc, char** argv) {
 
 
 
-	    //Extra Maneuvers
-	    //^^^^^^^^^^^^^^^
+      //Extra Maneuvers
+      //^^^^^^^^^^^^^^^
 
-	    //Displays the Cost
+      //Displays the Cost
       double seedCost = determineCost(&(response.trajectory.joint_trajectory));
       avgSeedCost += seedCost;
       ROS_INFO_STREAM("BFMT Cost :: " + std::to_string(seedCost));
 
 
 
-	    //Uncomment below to Publish JointTrajectory message for rqt plot visualization
+      //Uncomment below to Publish JointTrajectory message for rqt plot visualization
       //^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-	    //visualizePlot(&(response.trajectory.joint_trajectory));
+      //visualizePlot(&(response.trajectory.joint_trajectory));
 
 
       //Uncomment the following code to make the simulation require an input before continuing
@@ -533,15 +539,10 @@ int main(int argc, char** argv) {
 
 
 /*
-
 Function: timeParameterize
-
-
 Purpose: Time Parameterizes a trajectory to provide accelerations/velocities that fit the robot's requirements. Pass in response to have its 
          RobotTrajectory modified accordingly. Returns a double, which represents how long the time parameterization method took. 
          Returning -1 represents a failed solution.
-
-
 */
 
 static double timeParameterize(moveit_msgs::MotionPlanResponse *response, robot_model::RobotModelPtr robot_model, robot_state::RobotState *start_state)
@@ -566,14 +567,9 @@ static double timeParameterize(moveit_msgs::MotionPlanResponse *response, robot_
 
 
 /*
-
 Function: determineCost
-
-
 Purpose: Simple function that prints out the cost of a trajectory. Returns the total distance
          each joint travels
-
-
 */
 
 static double determineCost(trajectory_msgs::JointTrajectory *joint_trajectory)
@@ -598,8 +594,6 @@ static double determineCost(trajectory_msgs::JointTrajectory *joint_trajectory)
   /*
   
   Function: visualizePlot
-
-
   Purpose: Publishes the trajectory to rqt_publisher (initialized in main method)
            Uncomment the code to add arbitrary time parameterization for ease-of-
            visualization via rqt plot plugin
@@ -614,7 +608,7 @@ static void visualizePlot(trajectory_msgs::JointTrajectory *joint_trajectory, ro
     //^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
     // for(unsigned iter = 0; iter < size1; iter++)
     // {
-    // 	joint_trajectory->points[iter].time_from_start = ros::Duration(0.1*iter);
+    //  joint_trajectory->points[iter].time_from_start = ros::Duration(0.1*iter);
     // }
     rqt_publisher->publish(*joint_trajectory);
 
@@ -623,8 +617,6 @@ static void visualizePlot(trajectory_msgs::JointTrajectory *joint_trajectory, ro
   /*
   
   Function: addObstacles
-
-
   Purpose: Adds preset obstacle environments to the planning scene
   */
 
@@ -825,3 +817,4 @@ static void addObstacles(planning_scene::PlanningScenePtr planning_scene, ros::P
 
   ros::Duration(1).sleep();
 }
+
