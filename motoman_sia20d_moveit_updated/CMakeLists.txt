@@ -61,6 +61,10 @@ add_executable(fmt_shortcut src/fmt_shortcut.cpp)
 target_link_libraries(fmt_shortcut ${catkin_LIBRARIES} ${Boost_LIBRARIES})
 install(TARGETS fmt_shortcut DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
 
+add_executable(camera_navigation src/camera_navigation.cpp)
+target_link_libraries(camera_navigation ${catkin_LIBRARIES} ${Boost_LIBRARIES})
+install(TARGETS camera_navigation DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
+
 add_executable(fmt_stomp src/fmt_stomp.cpp)
 target_link_libraries(fmt_stomp ${catkin_LIBRARIES} ${Boost_LIBRARIES})
 install(TARGETS fmt_stomp DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})

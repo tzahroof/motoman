@@ -19,18 +19,40 @@
   <include file="$(find motoman_sia20d_moveit_updated)/launch/moveit_rviz.launch">
   </include>
 
-<node name="fmt_shortcut" pkg="motoman_sia20d_moveit_updated" type="fmt_shortcut" respawn="false" launch-prefix="" output="screen">
-    <param name="allowed_planning_time" value="3" />
-    <param name="max_Iter" value = "3" />
+<node name="camera_navigation" pkg="motoman_sia20d_moveit_updated" type="camera_navigation" respawn="false" launch-prefix="" output="screen">
+    <param name="allowed_planning_time" value="10" />
+    <param name="max_Iter" value = "30" />
     <param name="shortcut" value="Partial" />
     <param name="numShortcutLoops" value="100" />
     <param name="max_EdgeLength_Discretization" value="0.1" />
     <param name="max_EdgeLength_Waypoint_Injection" value="0.2" />
     <param name="sbp_plugin" value="ompl_interface/OMPLPlanner"/>
-    <param name="environment" value="clutter" />
+    <param name="environment" value="satellite" />
     <param name="adaptive_repetitions" value="5" />
+
+    <param name="useGlobalVisionConstraint" value="true" />
+    <param name="globPointToFocusX" value="0.5" />
+    <param name="globPointToFocusY" value="-1.0" />
+    <param name="globPointToFocusZ" value="1.2" />
+
+    <param name="useVisionConstraint" value="true" />
+    <param name="pointToFocusX" value="2.0" />
+    <param name="pointToFocusY" value="-0.3" />
+    <param name="pointToFocusZ" value="0.95" />
+
+    <!-- Satellite Testing Values -->
+    <param name="satX" value="0.5" />
+    <param name="satY" value="0.76" />
+    <param name="satZ" value="-0.3" />
+    <param name="orW" value="1.0" />
+    <param name="orX" value="0.0" />
+    <param name="orY" value = "0.0" />
+    <param name="orZ" value= "0.0" />
+
+
     <rosparam command="load" file="$(find motoman_sia20d_moveit_updated)/config/kinematics.yaml"/>
     <rosparam command="load" file="$(find motoman_sia20d_moveit_updated)/config/ompl_planning.yaml"/>
   </node>
 
 </launch>
+
