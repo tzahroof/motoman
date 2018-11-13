@@ -62,7 +62,7 @@ static double determineCost(trajectory_msgs::JointTrajectory *joint_trajectory);
 static void visualizePlot(trajectory_msgs::JointTrajectory *joint_trajectory, ros::Publisher *rqt_publisher);
 static bool checkIfPathHasCollisions(moveit_msgs::MotionPlanResponse *response, planning_scene::PlanningScenePtr planning_scene,const robot_state::JointModelGroup *joint_model_group, robot_state::RobotState *robot_state);
 static double timeParameterize(moveit_msgs::MotionPlanResponse *response, robot_model::RobotModelPtr robot_model, robot_state::RobotState *start_state);
-static void addObstacles(planning_scene::PlanningScenePtr planning_scene, ros::Publisher *planning_scene_diff_publisher, moveit_msgs::PlanningScene *planning_scene_msg, std::string environment, ros::NodeHandle &node_handle);
+static void addObstacles(planning_scene::PlanningScenePtr planning_scene, ros::Publisher *planning_scene_diff_publisher, moveit_msgs::PlanningScene *planning_scene_msg, std::string environment, ros::Publisher &vis_pub);
 
 /*
 
@@ -85,11 +85,6 @@ int main(int argc, char** argv) {
   spinner.start();
   ros::NodeHandle node_handle("~");
   int max_Iter = 1; //change this to alter the number of simulations
-  int numSeedFails = 0;
-  double avgTime = 0.0;
-  double avgSeedTime = 0.0;
-  double avgSeedCost = 0.0;
-  double avgShortcutCost = 0.0;
   std::string environment = "";
   moveit_msgs::MotionPlanResponse bestResponse;
   double bestCost = 100000;
@@ -108,6 +103,26 @@ int main(int argc, char** argv) {
   // .. _RobotModelLoader:
   //     http://docs.ros.org/indigo/api/moveit_ros_planning/html/classrobot__model__loader_1_1RobotModelLoader.html
 
+    robot_model_loader::RobotModelLoader robot_model_loader("robot_description");
+    robot_model::RobotModelPtr robot_model = robot_model_loader.getModel();
+    /* Create a RobotState and JointModelGroup to keep track of the current robot pose and planning group*/
+    robot_state::RobotStatePtr robot_state(new robot_state::RobotState(robot_model));
+    const robot_state::JointModelGroup* joint_model_group = robot_state->getJointModelGroup(PLANNING_GROUP);
+
+    /* Create an IterativeParabolicTimeParameterization object to add velocity/acceleration to waypoints after Shortcut*/
+
+    // Using the :moveit_core:`RobotModel`, we can construct a
+    // :planning_scene:`PlanningScene` that maintains the state of
+    // the world (including the robot).
+    planning_scene::PlanningScenePtr planning_scene(new planning_scene::PlanningScene(robot_model));
+    moveit_msgs::PlanningScene planning_scene_msg;
+    // We will now construct a loader to load a planner, by name.
+    // Note that we are using the ROS pluginlib library here.
+    boost::scoped_ptr<pluginlib::ClassLoader<planning_interface::PlannerManager>> planner_plugin_loader;
+    planning_interface::PlannerManagerPtr planner_instance;
+    std::string planner_plugin_name;
+
+
 
     //Set up a publisher to advertise the JointTrajectories to the graphing tool
 	  ros::Publisher display_publisher = node_handle.advertise<moveit_msgs::DisplayTrajectory>("/move_group/display_planned_path", 1, true);
@@ -117,6 +132,12 @@ int main(int argc, char** argv) {
     {
       ros::Duration(0.5).sleep();
     }
+    ros::Publisher vis_pub = node_handle.advertise<visualization_msgs::Marker>("visualization_marker",0);
+    while(vis_pub.getNumSubscribers() < 1)
+    {
+      std::cout<<"Waiting for Marker to connect to /camera_navigation/visualization_marker"<<std::endl;
+      ros::Duration(0.5).sleep();
+    }
 
     if(!node_handle.getParam("max_Iter", max_Iter))
     {
@@ -124,8 +145,8 @@ int main(int argc, char** argv) {
     }
     if(!node_handle.getParam("shortcut", shortcutMethod))
     {
-      shortcutMethod = "AdaptivePartial";
-      ROS_INFO_STREAM("No Shortcut Method provided. Defaulting to Adaptive Shortcut instead");
+      shortcutMethod = "Partial";
+      ROS_INFO_STREAM("No Shortcut Method provided. Defaulting to Partial Shortcut instead");
     }
     if(!node_handle.getParam("numShortcutLoops",numShortcutLoops))
     {
@@ -142,41 +163,8 @@ int main(int argc, char** argv) {
       ROS_ERROR_STREAM("Could not find the allowed_planning_time parameter. Defaulting to 5");
     }
 
-    /*
-      Create a pointer for the shortcut planner. The shortcut planner determines which shortcut method to implement
-    */
 
-
-    std::shared_ptr<shortcut::Shortcut_Planner> shortcut_planner;
-
-    if(shortcutMethod== "Regular" || shortcutMethod == "Adaptive")
-    {
-      if(!node_handle.getParam("max_EdgeLength_Discretization",max_EdgeLength_Discretization))
-      {
-        ROS_ERROR_STREAM("Could not load the max_EdgeLength_Discretization Parameter");
-      }
-
-      if(!node_handle.getParam("max_EdgeLength_Waypoint_Injection", max_EdgeLength_Waypoint_Injection))
-      {
-        ROS_ERROR_STREAM("Could not load the max_EdgeLength_Waypoint_Injection Parameter");
-      }
-
-      if(shortcutMethod == "Adaptive")
-      {
-        if(!node_handle.getParam("adaptive_repetitions", adaptive_repetitions))
-        {
-          ROS_ERROR_STREAM("Could not load the adaptive_repetitions Parameter");
-        }
-        shortcut_planner.reset(new shortcut::Shortcut_Planner(shortcutMethod, PLANNING_GROUP, allowed_planning_time, max_EdgeLength_Discretization, max_EdgeLength_Waypoint_Injection,adaptive_repetitions));
-      } else 
-      {
-        shortcut_planner.reset(new shortcut::Shortcut_Planner(shortcutMethod, PLANNING_GROUP, allowed_planning_time, max_EdgeLength_Discretization, max_EdgeLength_Waypoint_Injection));
-      }      
-    } else 
-    {
-      shortcut_planner.reset(new shortcut::Shortcut_Planner(shortcutMethod, PLANNING_GROUP, allowed_planning_time));
-    }
-
+    addObstacles(planning_scene, &planning_scene_diff_publisher, &planning_scene_msg,environment,vis_pub);
 
 
     // Visualization
@@ -211,26 +199,68 @@ int main(int argc, char** argv) {
     ROS_INFO_STREAM("About to enter 5 seconds of sleep to let startup occur properly");
     ros::Duration(5).sleep();
 
-    robot_model_loader::RobotModelLoader robot_model_loader("robot_description");
-    robot_model::RobotModelPtr robot_model = robot_model_loader.getModel();
-    /* Create a RobotState and JointModelGroup to keep track of the current robot pose and planning group*/
-    robot_state::RobotStatePtr robot_state(new robot_state::RobotState(robot_model));
-    const robot_state::JointModelGroup* joint_model_group = robot_state->getJointModelGroup(PLANNING_GROUP);
 
-    /* Create an IterativeParabolicTimeParameterization object to add velocity/acceleration to waypoints after Shortcut*/
+// for (int gtts = 0; gtts < 4; gtts++)
+// {
+    /*
+      Create a pointer for the shortcut planner. The shortcut planner determines which shortcut method to implement
+    */
+    int numSeedFails = 0;
+    int numWeirdSeeds = 0;
+    double avgTime = 0.0;
+    double avgSeedTime = 0.0;
+    double avgSeedCost = 0.0;
+    double avgShortcutCost = 0.0;
 
-    // Using the :moveit_core:`RobotModel`, we can construct a
-    // :planning_scene:`PlanningScene` that maintains the state of
-    // the world (including the robot).
-    planning_scene::PlanningScenePtr planning_scene(new planning_scene::PlanningScene(robot_model));
-    moveit_msgs::PlanningScene planning_scene_msg;
-    // We will now construct a loader to load a planner, by name.
-    // Note that we are using the ROS pluginlib library here.
-    boost::scoped_ptr<pluginlib::ClassLoader<planning_interface::PlannerManager>> planner_plugin_loader;
-    planning_interface::PlannerManagerPtr planner_instance;
-    std::string planner_plugin_name;
+    //TODO: Remove this section to prevent looping through all the shortcuts
+    // switch(gtts)
+    // {
+    //   case 0:
+    //     shortcutMethod = "Regular";
+    //     break;
+    //   case 1:
+    //     shortcutMethod = "Adaptive";
+    //     break;
+    //   case 2:
+    //     shortcutMethod = "Partial";
+    //     break;
+    //   case 3:
+    //     shortcutMethod = "AdaptivePartial";
+    //     break;
+    //   default:
+    //     std::cout<<"We should not be here! Failed looping through shortcuts"<<std::endl;
+    // }
 
-    addObstacles(planning_scene, &planning_scene_diff_publisher, &planning_scene_msg,environment,node_handle);
+    std::shared_ptr<shortcut::Shortcut_Planner> shortcut_planner;
+
+    if(shortcutMethod== "Regular" || shortcutMethod == "Adaptive")
+    {
+      if(!node_handle.getParam("max_EdgeLength_Discretization",max_EdgeLength_Discretization))
+      {
+        ROS_ERROR_STREAM("Could not load the max_EdgeLength_Discretization Parameter");
+      }
+
+      if(!node_handle.getParam("max_EdgeLength_Waypoint_Injection", max_EdgeLength_Waypoint_Injection))
+      {
+        ROS_ERROR_STREAM("Could not load the max_EdgeLength_Waypoint_Injection Parameter");
+      }
+
+      if(shortcutMethod == "Adaptive")
+      {
+        if(!node_handle.getParam("adaptive_repetitions", adaptive_repetitions))
+        {
+          ROS_ERROR_STREAM("Could not load the adaptive_repetitions Parameter");
+        }
+        shortcut_planner.reset(new shortcut::Shortcut_Planner(shortcutMethod, PLANNING_GROUP, allowed_planning_time, max_EdgeLength_Discretization, max_EdgeLength_Waypoint_Injection,adaptive_repetitions));
+      } else 
+      {
+        shortcut_planner.reset(new shortcut::Shortcut_Planner(shortcutMethod, PLANNING_GROUP, allowed_planning_time, max_EdgeLength_Discretization, max_EdgeLength_Waypoint_Injection));
+      }      
+    } else 
+    {
+      shortcut_planner.reset(new shortcut::Shortcut_Planner(shortcutMethod, PLANNING_GROUP, allowed_planning_time));
+    }
+
 
    // UNCOMMENT the following line  to only start the program upon button press
    // ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -325,7 +355,19 @@ int main(int argc, char** argv) {
     //^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
     robot_state::RobotState start_state(robot_model);
-    start_state.setToDefaultValues(start_state.getJointModelGroup(PLANNING_GROUP),"start_state_camera");
+    std::string start_name;
+    std::string end_name;
+    if(environment == "floating")
+    {
+      start_name = "start_state_float";
+      end_name = "goal_state_float";
+    }
+    else
+    {
+      start_name = "start_state_satellite";
+      end_name = "goal_state_satellite";
+    }
+    start_state.setToDefaultValues(start_state.getJointModelGroup(PLANNING_GROUP),start_name);
     moveit::core::robotStateToRobotStateMsg(start_state,req.start_state);
     start_state.updateCollisionBodyTransforms();
     //planning_scene->setCurrentState(start_state);
@@ -376,7 +418,7 @@ int main(int argc, char** argv) {
     std::string Camera_Link = "tool0";
 
     robot_state::RobotState test_state(robot_model);
-    test_state.setToDefaultValues(test_state.getJointModelGroup(PLANNING_GROUP),"start_state_camera");
+    test_state.setToDefaultValues(test_state.getJointModelGroup(PLANNING_GROUP),start_name);
     test_state.update();
 
 
@@ -413,12 +455,28 @@ int main(int argc, char** argv) {
       planning_scene -> addGlobalCameraConstraint(globCameraAngle, globPointToFocus, globDir);
       planning_scene -> setCameraLink(Camera_Link);
 
-      moveit_msgs::CollisionObject sphere_object;
-      sphere_object.id="globPoint";
-      shape_msgs::SolidPrimitive sphere_primitive;
-      sphere_primitive.type = sphere_primitive.SPHERE;
-      sphere_primitive.dimensions.resize(1);
-      sphere_primitive.dimensions[0] = 0.1;
+      // moveit_msgs::CollisionObject sphere_object;
+      // sphere_object.id="globPoint";
+      // shape_msgs::SolidPrimitive sphere_primitive;
+      // sphere_primitive.type = sphere_primitive.SPHERE;
+      // sphere_primitive.dimensions.resize(1);
+      // sphere_primitive.dimensions[0] = 0.1;
+
+
+      // sphere_object.primitives.push_back(sphere_primitive);
+      // sphere_object.primitive_poses.push_back(sphere_pose);
+      // sphere_object.operation = sphere_object.ADD;
+      // sphere_object.header.frame_id = "base_link";
+      // planning_scene_msg.world.collision_objects.push_back(sphere_object);
+      // planning_scene_msg.is_diff = true;
+
+      visualization_msgs::Marker marker;
+      marker.header.frame_id = "base_link";
+      marker.header.stamp = ros::Time::now();
+      marker.ns="globPoint";
+      marker.id = 20; //ARBITRARY NUMBER
+      marker.action = visualization_msgs::Marker::ADD;
+      marker.type=visualization_msgs::Marker::MESH_RESOURCE;
 
       geometry_msgs::Pose sphere_pose;
       sphere_pose.orientation.w = 1.0;
@@ -426,13 +484,18 @@ int main(int argc, char** argv) {
       sphere_pose.position.y = globPointToFocus[1];
       sphere_pose.position.z = globPointToFocus[2];
 
-      sphere_object.primitives.push_back(sphere_primitive);
-      sphere_object.primitive_poses.push_back(sphere_pose);
-      sphere_object.operation = sphere_object.ADD;
-      sphere_object.header.frame_id = "base_link";
-      planning_scene_msg.world.collision_objects.push_back(sphere_object);
-      planning_scene_msg.is_diff = true;
+      marker.pose = sphere_pose;
+      marker.scale.x=1;
+      marker.scale.y=1;
+      marker.scale.z=1;
+      marker.color.a = 1.0;
+      marker.color.r = 0.5;
+      marker.color.b= 0.0;
+      marker.color.g = 0.0;
 
+      marker.mesh_resource = "package://motoman_sia20d_moveit_updated/src/camera.dae";
+
+      vis_pub.publish(marker);
       
     
       //std::cout<< "Is Global Target in View :: " << (planning_scene->checkGlobalInView(test_state))<<std::endl;
@@ -443,46 +506,9 @@ int main(int argc, char** argv) {
       */
 
 
-        // collision_detection::CollisionRequest c_req;
-        // collision_detection::CollisionResult c_res;
-        // c_req.group_name = PLANNING_GROUP; //replace this for improved modularity later
-        // c_req.contacts = true;
-        // c_req.max_contacts = 100;
-        // c_req.max_contacts_per_pair = 5;
-        // c_req.verbose = false;
-
-        // planning_scene ->checkCollision(c_req,c_res, test_state);
-        // std::cout<<"    Collision :: "<< ((c_res.collision)?"IN COLLISION\n":"safe\n");
-
-        //  moveit_msgs::AttachedCollisionObject aco;
-        //  aco.object = planning_scene->addUnobstructedVision(test_state,globPointToFocus, "test_global_vision");
-        //  std::string id = aco.object.id;
-        //  std::vector<shapes::ShapeConstPtr> shapes;
-        //  shapes::Shape* s = shapes::constructShapeFromMsg(aco.object.primitives[0]);
-        //  shapes.push_back(shapes::ShapeConstPtr(s));
-
-        //  EigenSTL::vector_Affine3d poses;
-        //  Eigen::Affine3d p; //this pose is in global frame
-        //  tf::poseMsgToEigen(aco.object.primitive_poses.front(), p);
-
-        //  //what is in my pose?
-        //  geometry_msgs::Pose vision_pose = aco.object.primitive_poses.front();
-        //  poses.push_back(p);
-        //  std::vector<std::string> touch_links;
-        //  trajectory_msgs::JointTrajectory emptyDetach;
-
-        //  std::string link_name = "base_link";
-
-        //  test_state.attachBody(id,shapes, poses, touch_links, link_name,emptyDetach);
-
-        //  moveit_msgs::RobotState testRobotStateMsg;
-        //  moveit::core::robotStateToRobotStateMsg(test_state,testRobotStateMsg);
-
-        //  planning_scene_msg.robot_state = testRobotStateMsg;
-        //  planning_scene_msg.robot_state.is_diff=true;
-
-
       planning_scene_diff_publisher.publish(planning_scene_msg);
+
+
 
     }
 
@@ -511,12 +537,26 @@ int main(int argc, char** argv) {
     
       pointToFocus << (double)pointToFocusX,(double)pointToFocusY,(double)pointToFocusZ;
 
-      moveit_msgs::CollisionObject sphere_object;
-      sphere_object.id="Point_to_Visualize";
-      shape_msgs::SolidPrimitive sphere_primitive;
-      sphere_primitive.type = sphere_primitive.SPHERE;
-      sphere_primitive.dimensions.resize(1);
-      sphere_primitive.dimensions[0] = 0.1;
+      // moveit_msgs::CollisionObject sphere_object;
+      // sphere_object.id="Point_to_Visualize";
+      // shape_msgs::SolidPrimitive sphere_primitive;
+      // sphere_primitive.type = sphere_primitive.SPHERE;
+      // sphere_primitive.dimensions.resize(1);
+      // sphere_primitive.dimensions[0] = 0.1;
+
+      // sphere_object.primitives.push_back(sphere_primitive);
+      // sphere_object.primitive_poses.push_back(sphere_pose);
+      // sphere_object.operation = sphere_object.ADD;
+      // sphere_object.header.frame_id = "base_link";
+      // planning_scene_msg.world.collision_objects.push_back(sphere_object);
+
+      visualization_msgs::Marker marker;
+      marker.header.frame_id = "base_link";
+      marker.header.stamp = ros::Time::now();
+      marker.ns="visPoint";
+      marker.id = 20; //ARBITRARY NUMBER
+      marker.action = visualization_msgs::Marker::ADD;
+      marker.type=visualization_msgs::Marker::MESH_RESOURCE;
 
       geometry_msgs::Pose sphere_pose;
       sphere_pose.orientation.w = 1.0;
@@ -524,167 +564,20 @@ int main(int argc, char** argv) {
       sphere_pose.position.y = pointToFocus[1];
       sphere_pose.position.z = pointToFocus[2];
 
-      sphere_object.primitives.push_back(sphere_primitive);
-      sphere_object.primitive_poses.push_back(sphere_pose);
-      sphere_object.operation = sphere_object.ADD;
-      sphere_object.header.frame_id = "base_link";
-      planning_scene_msg.world.collision_objects.push_back(sphere_object);
+      marker.pose = sphere_pose;
+      marker.scale.x=1;
+      marker.scale.y=1;
+      marker.scale.z=1;
+      marker.color.a = 1.0;
+      marker.color.r = 0.5;
+      marker.color.b= 0.0;
+      marker.color.g = 0.0;
+
+      marker.mesh_resource = "package://motoman_sia20d_moveit_updated/src/camera.dae";
+
+      vis_pub.publish(marker);
 
 
-
-
-      //test code
-
-    // double height = 2.0;
-    // Eigen::Vector3d ee_point;
-    // ee_point << 0.0,0.0,0.05;
-
-    // Eigen::Vector3d ee_direction;
-    // ee_direction << 0.0,0.0,1.0;
-
-    // Eigen::Vector3d transformed_ee_point = transform_From_BaseLink * ee_point;
-    // Eigen::Vector3d transformed_ee_final_point = transform_From_BaseLink2 * ee_point;
-
-
-    // Eigen::Vector3d transformed_ee_direction= transform_From_BaseLink.rotation()* ee_direction;
-    // Eigen::Vector3d transformed_ee_direction_final= transform_From_BaseLink2.rotation()*ee_direction;
-
-
-    // Eigen::Quaterniond transformed_orientation(transform_From_BaseLink.rotation());
-    // Eigen::Quaterniond transformed_orientation_final(transform_From_BaseLink2.rotation());
-
-
-    // Eigen::Vector3d dir_to_point = pointToFocus - transformed_ee_point;
-    // Eigen::Vector3d dir_start_loc = transformed_ee_point;
-
-
-    // //transformed_ee_direction should be normalized
-
-    // std::cout<<"We have made it to the actual cross and normalization stuff\n";
-    // Eigen::Vector3d unit_dir_to_point = dir_to_point.normalized();
-    // std::cout<<"Unit_dir_to_point :: \n" << unit_dir_to_point.format(OctaveFmt) << std::endl;
-    // std::cout<<"transformed_ee_direction :: \n" << transformed_ee_direction.format(OctaveFmt)<<std::endl;
-    // Eigen::Vector3d axis = transformed_ee_direction.cross(unit_dir_to_point).normalized();
-    // std::cout<<"Axis :: \n" << axis.format(OctaveFmt) <<std::endl;
-
-    // Eigen::Quaterniond* orientation_to_Point;
-
-    // if(axis.norm() <= 0.00001)
-    // {
-    //   orientation_to_Point = new Eigen::Quaterniond(1,0,0,0);
-    //   //std::cout<<"orientation_to_Point\n";
-    //   //std::cout<<orientation_to_Point->format(OctaveFmt)<<std::endl;
-    // } else {
-    //   std::cout<<"In else\n";
-    //   double theta = std::acos(transformed_ee_direction.dot(unit_dir_to_point));
-    //   orientation_to_Point = new Eigen::Quaterniond(std::cos(theta/2), axis[0]*sin(theta/2), axis[1]*sin(theta/2), axis[2]*sin(theta/2));
-    // }
-
-    // std::cout<<"We made it past the math\n";
-
-    // moveit_msgs::CollisionObject vision_rectangle;
-    // vision_rectangle.id="vision_rectangle";
-
-    // shape_msgs::SolidPrimitive vision_primitive;
-    // vision_primitive.type = vision_primitive.BOX;
-    // vision_primitive.dimensions.resize(3);
-    // vision_primitive.dimensions[0] = 0.05; 
-    // vision_primitive.dimensions[1] = 0.05;
-    // vision_primitive.dimensions[2] = dir_to_point.norm();
-
-    // geometry_msgs::Pose vision_pose;
-    // vision_pose.orientation.x = orientation_to_Point->x();
-    // vision_pose.orientation.y = orientation_to_Point->y();
-    // vision_pose.orientation.z = orientation_to_Point->z();
-    // vision_pose.orientation.w = orientation_to_Point->w();
-
-
-    // vision_pose.position.x = dir_start_loc[0] + dir_to_point[0]/2;
-    // vision_pose.position.y = dir_start_loc[1] + dir_to_point[1]/2;
-    // vision_pose.position.z = dir_start_loc[2] + dir_to_point[2]/2;
-
-    // vision_rectangle.primitives.push_back(vision_primitive);
-    // vision_rectangle.primitive_poses.push_back(vision_pose);
-    // vision_rectangle.operation = vision_rectangle.ADD;
-    // vision_rectangle.header.frame_id = "/base_link";
-    // planning_scene_msg.world.collision_objects.push_back(vision_rectangle);
-
-    // moveit_msgs::CollisionObject vision_rectangle2;
-    // vision_rectangle2.id="vision_rectangle2";
-
-    // shape_msgs::SolidPrimitive vision_primitive2;
-    // vision_primitive2.type = vision_primitive2.BOX;
-    // vision_primitive2.dimensions.resize(3);
-    // vision_primitive2.dimensions[0] = 0.1; 
-    // vision_primitive2.dimensions[1] = 0.1;
-    // vision_primitive2.dimensions[2] = height;
-
-    // geometry_msgs::Pose vision_pose2;
-    // vision_pose2.orientation.x = transformed_orientation_final.x();
-    // vision_pose2.orientation.y = transformed_orientation_final.y();
-    // vision_pose2.orientation.z = transformed_orientation_final.z();
-    // vision_pose2.orientation.w = transformed_orientation_final.w();
-    // vision_pose2.position.x = transformed_ee_final_point[0];
-    // vision_pose2.position.y = transformed_ee_final_point[1];
-    // vision_pose2.position.z = transformed_ee_final_point[2];
-
-    // vision_rectangle2.primitives.push_back(vision_primitive2);
-    // vision_rectangle2.primitive_poses.push_back(vision_pose2);
-    // vision_rectangle2.operation = vision_rectangle2.ADD;
-    // vision_rectangle2.header.frame_id = "/base_link";
-    // planning_scene_msg.world.collision_objects.push_back(vision_rectangle2);
-
-    // planning_scene_diff_publisher.publish(planning_scene_msg);
-
-
-      //SPHERE AND RECTANGLE FOR TESTING
-
-      // moveit_msgs::CollisionObject sphere_object2;
-      // sphere_object2.id="vision_pose_position";
-      // shape_msgs::SolidPrimitive sphere_primitive2;
-      // sphere_primitive2.type = sphere_primitive.SPHERE;
-      // sphere_primitive2.dimensions.resize(1);
-      // sphere_primitive2.dimensions[0] = 0.1;
-
-      // geometry_msgs::Pose sphere_pose2;
-      // sphere_pose2.orientation.w = 1.0;
-      // sphere_pose2.position.x = -0.02;//0.23;
-      // sphere_pose2.position.y = -0.05;//0.0;
-      // sphere_pose2.position.z = -0.03;//1.32018;
-
-      // sphere_object2.primitives.push_back(sphere_primitive2);
-      // sphere_object2.primitive_poses.push_back(sphere_pose2);
-      // sphere_object2.operation = sphere_object2.ADD;
-      // sphere_object2.header.frame_id = "/base_link";
-      // planning_scene_msg.world.collision_objects.push_back(sphere_object2);
-
-
-      // moveit_msgs::CollisionObject collision_object;
-      // collision_object.id="test_for_orientation";
-      // shape_msgs::SolidPrimitive primitive;
-      // primitive.type = primitive.BOX;
-      // primitive.dimensions.resize(3);
-      // primitive.dimensions[0] = 0.05;
-      // primitive.dimensions[1] = 0.05;
-      // primitive.dimensions[2] = 1;
-
-      // geometry_msgs::Pose box_pose;
-      // box_pose.orientation.w = -0.2;//0.97;
-      // box_pose.orientation.x = 0;
-      // box_pose.orientation.y = 0.98;//0.25;
-      // box_pose.orientation.z = 0;
-      // box_pose.position.x = 0;
-      // box_pose.position.y = 0;
-      // box_pose.position.z = 0;
-
-      // collision_object.primitives.push_back(primitive);
-      // collision_object.primitive_poses.push_back(box_pose);
-      // collision_object.operation = collision_object.ADD;
-      // collision_object.header.frame_id = "/base_link";
-      // planning_scene_msg.world.collision_objects.push_back(collision_object);
-
-
-    //UNCOMMENT FOLLOWING TO TEST VISION
       double camera_angle = 3.14159/6;  //30 degrees; formerly 45
       Eigen::Vector3d visionPoint;
 
@@ -693,80 +586,20 @@ int main(int argc, char** argv) {
       //^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
       planning_scene->addCameraConstraint(camera_angle, Camera_Link, pointToFocus);
 
-      
 
       planning_scene_msg.is_diff = true;
-      //planning_scene_msg.robot_state = robotStateMsg;
-
-      // std::cout << "Is the Point in view? " << planning_scene->checkInView(planning_scene->getCurrentState()) <<std::endl;;
-
-      // //planning_scene_msg.world.collision_objects.push_back(planning_scene->addUnobstructedVision( planning_scene->getCurrentState()));
-
-      // // planning_scene_msg.robot_state = robotStateMsg;
-      // // planning_scene_msg.robot_state.is_diff = true;
-      //    moveit_msgs::AttachedCollisionObject aco;
-      //    aco.object = planning_scene->addUnobstructedVision(goal_state);
-      //    std::string id = aco.object.id;
-      //    std::vector<shapes::ShapeConstPtr> shapes;
-      //    shapes::Shape* s = shapes::constructShapeFromMsg(aco.object.primitives[0]);
-      //    shapes.push_back(shapes::ShapeConstPtr(s));
-
-      //    EigenSTL::vector_Affine3d poses;
-      //    Eigen::Affine3d p; //this pose is in global frame
-      //    tf::poseMsgToEigen(aco.object.primitive_poses.front(), p);
-
-      //    //what is in my pose?
-      //    geometry_msgs::Pose vision_pose = aco.object.primitive_poses.front();
-
-      //  std::cout<<"Orientation :: \n"
-      //    <<vision_pose.orientation.w <<std::endl
-      //       <<vision_pose.orientation.x <<std::endl
-      //         <<vision_pose.orientation.y <<std::endl
-      //           <<vision_pose.orientation.z <<std::endl;
-
-      //   std::cout<<"Position :: \n"
-      //       <<vision_pose.position.x <<std::endl
-      //         <<vision_pose.position.y <<std::endl
-      //           <<vision_pose.position.z <<std::endl;
-
-
-      //    std::cout<<"global -> desired rotation :: \n"<<p.rotation().format(OctaveFmt)<<std::endl;
-      //    std::cout<<"global -> desired translation :: \n"<<p.translation().format(OctaveFmt)<<std::endl;
-      //    Eigen::Affine3d to_Plan_Frame = start_state.getFrameTransform(Camera_Link); //local -> global
-      //    std::cout<<"local -> global rotation:: \n"<<to_Plan_Frame.rotation().format(OctaveFmt)<<std::endl;
-      //    std::cout<<"local -> global translation:: \n"<<to_Plan_Frame.translation().format(OctaveFmt)<<std::endl;
-      //    poses.push_back(p);
-      //    std::cout<<"final rotation:: \n"<<(p*to_Plan_Frame).rotation().format(OctaveFmt)<<std::endl;
-      //    std::cout<<"final translation :: \n"<<(p*to_Plan_Frame).translation().format(OctaveFmt)<<std::endl;
-      //    std::vector<std::string> touch_links;
-      //    touch_links.push_back("tool0"); touch_links.push_back("link_t");
-      //    std::string link_name = "base_link";
-      //    trajectory_msgs::JointTrajectory emptyDetach;
-
-      //    start_state.attachBody(id,shapes, poses, touch_links, link_name,emptyDetach);
-      //    moveit_msgs::RobotState robotStateMsg;
-      //    moveit::core::robotStateToRobotStateMsg(start_state, robotStateMsg);
-
-        //TODO: Add to planning scene? NOt reall necessary
-         // planning_scene_msg.robot_state = robotStateMsg;
-         planning_scene_msg.robot_state.is_diff = true;
 
       planning_scene_diff_publisher.publish(planning_scene_msg);
     }
 
-    // planning_scene_msg.world.collision_objects.clear();
-    // planning_scene_msg.world.collision_objects.push_back(planning_scene->removeUnobstructedVision());
-    // planning_scene_diff_publisher.publish(planning_scene_msg);
-    // visual_tools.prompt("Press next to proceed, fam");
-
-
+    visual_tools.prompt("Press next to continue");
 
 
     //Problem definition
 
 
     robot_state::RobotState goal_state_fmt(robot_model);
-    goal_state_fmt.setToDefaultValues(goal_state_fmt.getJointModelGroup(PLANNING_GROUP),"goal_state_satellite");
+    goal_state_fmt.setToDefaultValues(goal_state_fmt.getJointModelGroup(PLANNING_GROUP),end_name);
 
     moveit_msgs::Constraints joint_goal_fmt = kinematic_constraints::constructGoalConstraints(goal_state_fmt, joint_model_group);
     req.goal_constraints.clear();
@@ -790,13 +623,108 @@ int main(int argc, char** argv) {
       ROS_ERROR("Could not compute plan successfully");
     }
 
+    moveit_msgs::MotionPlanResponse response;
+    moveit_msgs::DisplayTrajectory display_trajectory;
+
+    if(seedSuccess)  //check if cost is reasonable.if cost > 25, we can assume that the planner wigged out and created an infeasible plan
+    {
+      res.getMessage(response);
+      double checkCost = determineCost(&(response.trajectory.joint_trajectory));
+      if(checkCost > 25) 
+      {
+      //   display_trajectory.trajectory_start = response.trajectory_start;
+      //   display_trajectory.trajectory.push_back(response.trajectory);
+      //   display_publisher.publish(display_trajectory);
+
+      // //UNCOMMENT FOR STATE-BY-STATE ANALYSIS
+      // //^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+      // for(auto iter = 0; iter < response.trajectory.joint_trajectory.points.size(); iter++)
+      // {
+      //   robot_state::RobotState thisRobotState(robot_model);
+      //   thisRobotState.setVariablePositions(response.trajectory.joint_trajectory.points[iter].positions);
+      //   thisRobotState.update();
+      //   if(useVisionConstraint)
+      //   {
+      //     std::cout<<"Target Point "<<iter<<" : " << (planning_scene->checkInView(thisRobotState) ? "in view\n":"NOT IN VIEW\n");
+      //   }
+      //   if(useGlobalVisionConstraint)
+      //   {
+      //     std::cout<<"Target Point "<<iter<<" : " << (planning_scene->checkGlobalInView(thisRobotState) ? "in view\n":"NOT IN VIEW\n");
+      //   }
+
+
+      //   collision_detection::CollisionRequest c_req;
+      //   collision_detection::CollisionResult c_res;
+      //   c_req.group_name = PLANNING_GROUP; //replace this for improved modularity later
+      //   c_req.contacts = true;
+      //   c_req.max_contacts = 100;
+      //   c_req.max_contacts_per_pair = 5;
+      //   c_req.verbose = false;
+
+      //   planning_scene ->checkCollision(c_req,c_res, thisRobotState);
+      //   std::cout<<"    Collision :: "<< ((c_res.collision)?"IN COLLISION\n":"safe\n");
+
+      //   for(auto lmo = 0; lmo <2; lmo++)
+      //   {
+      //      moveit_msgs::AttachedCollisionObject aco;
+      //      if(lmo == 0)
+      //      {
+      //       //TARGET CAMERA
+      //       aco.object = planning_scene->addUnobstructedVision(thisRobotState,pointToFocus, "test_target_vision");
+      //      } 
+      //      else if(lmo == 1)
+      //      {
+      //       aco.object = planning_scene->addUnobstructedVision(thisRobotState,globPointToFocus, "test_global_vision");
+      //      }
+           
+      //      std::string id = aco.object.id;
+      //      std::vector<shapes::ShapeConstPtr> shapes;
+      //      shapes::Shape* s = shapes::constructShapeFromMsg(aco.object.primitives[0]);
+      //      shapes.push_back(shapes::ShapeConstPtr(s));
+
+      //      EigenSTL::vector_Affine3d poses;
+      //      Eigen::Affine3d p; //this pose is in global frame
+      //      tf::poseMsgToEigen(aco.object.primitive_poses.front(), p);
+
+      //      //what is in my pose?
+      //      geometry_msgs::Pose vision_pose = aco.object.primitive_poses.front();
+      //      poses.push_back(p);
+      //      std::vector<std::string> touch_links;
+      //      trajectory_msgs::JointTrajectory emptyDetach;
+
+      //      std::string link_name = "base_link";
+
+      //      thisRobotState.attachBody(id,shapes, poses, touch_links, link_name,emptyDetach);
+
+      //      moveit_msgs::RobotState thisRobotStateMsg;
+      //      moveit::core::robotStateToRobotStateMsg(thisRobotState,thisRobotStateMsg);
+
+      //      planning_scene_msg.robot_state = thisRobotStateMsg;
+      //      planning_scene_msg.robot_state.is_diff=true;
+
+      //      planning_scene_msg.world.collision_objects.clear();
+      //      planning_scene_msg.is_diff=true;
+      //      planning_scene_diff_publisher.publish(planning_scene_msg);
+      //  }
+
+      //    ros::Duration(0.1).sleep();
+      // }
+        if(planning_scene->isPathValid(response.trajectory_start, response.trajectory, PLANNING_GROUP) == false)
+        {
+          seedSuccess = false;
+          numSeedFails++;
+        }
+      // visual_tools.prompt("Woah, what do we have here?");
+      }
+      
+    }
+
 
     if(seedSuccess)
     {
 
-	    moveit_msgs::MotionPlanResponse response;
-	    res.getMessage(response);
-      moveit_msgs::DisplayTrajectory display_trajectory;
+	    
+	   
 
       avgTime += response.planning_time;
       avgSeedTime += response.planning_time;
@@ -808,6 +736,7 @@ int main(int argc, char** argv) {
 
      //  ROS_INFO("Visualizing the trajectory");
 	    // display_trajectory.trajectory_start = response.trajectory_start;
+      // display_trajectory.trajectory.clear();
 	    // display_trajectory.trajectory.push_back(response.trajectory);
 	    // display_publisher.publish(display_trajectory);
 
@@ -895,79 +824,82 @@ int main(int argc, char** argv) {
 
       // visual_tools.prompt("Please press next in the RvizVisualToolsGui to do state by state analysis");
 
-      //UNCOMMENT FOR STATE-BY-STATE ANALYSIS
-      //^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-      // for(auto iter = 0; iter < response.trajectory.joint_trajectory.points.size(); iter++)
-      // {
-      //   robot_state::RobotState thisRobotState(robot_model);
-      //   thisRobotState.setVariablePositions(response.trajectory.joint_trajectory.points[iter].positions);
-      //   thisRobotState.update();
-      //   if(useVisionConstraint)
-      //   {
-      //     std::cout<<"Target Point "<<iter<<" : " << (planning_scene->checkInView(thisRobotState) ? "in view\n":"NOT IN VIEW\n");
-      //   }
-      //   if(useGlobalVisionConstraint)
-      //   {
-      //     std::cout<<"Target Point "<<iter<<" : " << (planning_scene->checkGlobalInView(thisRobotState) ? "in view\n":"NOT IN VIEW\n");
-      //   }
+      // UNCOMMENT FOR STATE-BY-STATE ANALYSIS
+      // ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+      for(auto iter = 0; iter < response.trajectory.joint_trajectory.points.size(); iter++)
+      {
+        robot_state::RobotState thisRobotState(robot_model);
+        thisRobotState.setVariablePositions(response.trajectory.joint_trajectory.points[iter].positions);
+        thisRobotState.update();
+        if(useVisionConstraint)
+        {
+          std::cout<<"Target Point "<<iter<<" : " << (planning_scene->checkInView(thisRobotState) ? "in view\n":"NOT IN VIEW\n");
+        }
+        if(useGlobalVisionConstraint)
+        {
+          std::cout<<"Target Point "<<iter<<" : " << (planning_scene->checkGlobalInView(thisRobotState) ? "in view\n":"NOT IN VIEW\n");
+        }
 
 
-      //   collision_detection::CollisionRequest c_req;
-      //   collision_detection::CollisionResult c_res;
-      //   c_req.group_name = PLANNING_GROUP; //replace this for improved modularity later
-      //   c_req.contacts = true;
-      //   c_req.max_contacts = 100;
-      //   c_req.max_contacts_per_pair = 5;
-      //   c_req.verbose = false;
+        collision_detection::CollisionRequest c_req;
+        collision_detection::CollisionResult c_res;
+        c_req.group_name = PLANNING_GROUP; //replace this for improved modularity later
+        c_req.contacts = true;
+        c_req.max_contacts = 100;
+        c_req.max_contacts_per_pair = 5;
+        c_req.verbose = false;
 
-      //   planning_scene ->checkCollision(c_req,c_res, thisRobotState);
-      //   std::cout<<"    Collision :: "<< ((c_res.collision)?"IN COLLISION\n":"safe\n");
+        planning_scene ->checkCollision(c_req,c_res, thisRobotState);
+        std::cout<<"    Collision :: "<< ((c_res.collision)?"IN COLLISION\n":"safe\n");
 
-      //   for(auto lmo = 0; lmo <2; lmo++)
-      //   {
-      //      moveit_msgs::AttachedCollisionObject aco;
-      //      if(lmo == 0)
-      //      {
-      //       //TARGET CAMERA
-      //       aco.object = planning_scene->addUnobstructedVision(thisRobotState,pointToFocus, "test_target_vision");
-      //      } 
-      //      else if(lmo == 1)
-      //      {
-      //       aco.object = planning_scene->addUnobstructedVision(thisRobotState,globPointToFocus, "test_global_vision");
-      //      }
+        for(auto lmo = 0; lmo <2; lmo++)
+        {
+           moveit_msgs::AttachedCollisionObject aco;
+           if(lmo == 0)
+           {
+            //TARGET CAMERA
+            aco.object = planning_scene->addUnobstructedVision(thisRobotState,pointToFocus, "test_target_vision");
+           } 
+           else if(lmo == 1)
+           {
+            aco.object = planning_scene->addUnobstructedVision(thisRobotState,globPointToFocus, "test_global_vision");
+           }
            
-      //      std::string id = aco.object.id;
-      //      std::vector<shapes::ShapeConstPtr> shapes;
-      //      shapes::Shape* s = shapes::constructShapeFromMsg(aco.object.primitives[0]);
-      //      shapes.push_back(shapes::ShapeConstPtr(s));
+           std::string id = aco.object.id;
+           std::vector<shapes::ShapeConstPtr> shapes;
+           shapes::Shape* s = shapes::constructShapeFromMsg(aco.object.primitives[0]);
+           shapes.push_back(shapes::ShapeConstPtr(s));
 
-      //      EigenSTL::vector_Affine3d poses;
-      //      Eigen::Affine3d p; //this pose is in global frame
-      //      tf::poseMsgToEigen(aco.object.primitive_poses.front(), p);
+           EigenSTL::vector_Affine3d poses;
+           Eigen::Affine3d p; //this pose is in global frame
+           tf::poseMsgToEigen(aco.object.primitive_poses.front(), p);
 
-      //      //what is in my pose?
-      //      geometry_msgs::Pose vision_pose = aco.object.primitive_poses.front();
-      //      poses.push_back(p);
-      //      std::vector<std::string> touch_links;
-      //      trajectory_msgs::JointTrajectory emptyDetach;
+           //what is in my pose?
+           geometry_msgs::Pose vision_pose = aco.object.primitive_poses.front();
+           poses.push_back(p);
+           std::vector<std::string> touch_links;
+           trajectory_msgs::JointTrajectory emptyDetach;
 
-      //      std::string link_name = "base_link";
+           std::string link_name = "base_link";
 
-      //      thisRobotState.attachBody(id,shapes, poses, touch_links, link_name,emptyDetach);
+           thisRobotState.attachBody(id,shapes, poses, touch_links, link_name,emptyDetach);
 
-      //      moveit_msgs::RobotState thisRobotStateMsg;
-      //      moveit::core::robotStateToRobotStateMsg(thisRobotState,thisRobotStateMsg);
+           moveit_msgs::RobotState thisRobotStateMsg;
+           moveit::core::robotStateToRobotStateMsg(thisRobotState,thisRobotStateMsg);
 
-      //      planning_scene_msg.robot_state = thisRobotStateMsg;
-      //      planning_scene_msg.robot_state.is_diff=true;
+           planning_scene_msg.robot_state = thisRobotStateMsg;
+           planning_scene_msg.robot_state.is_diff=true;
 
-      //      planning_scene_msg.world.collision_objects.clear();
-      //      planning_scene_msg.is_diff=true;
-      //      planning_scene_diff_publisher.publish(planning_scene_msg);
-      //  }
+           planning_scene_msg.world.collision_objects.clear();
+           planning_scene_msg.is_diff=true;
+           planning_scene_diff_publisher.publish(planning_scene_msg);
+       }
 
-      //    ros::Duration(0.1).sleep();
-      // }
+         ros::Duration(0.1).sleep();
+
+         //Comment out
+         visual_tools.prompt("Press next to continue");
+      }
 
 
 
@@ -1021,7 +953,7 @@ int main(int argc, char** argv) {
     // std::cout<<"rotation from tool0 :: \n"<<transform_From_EE2.rotation().format(OctaveFmt)<<std::endl;
 
     //UNCOMMENT following line if you wish to make code stop here until a button press is received.
-    //visual_tools.prompt("Please press next in the RVizVisualToolsGui to continue. Make sure to add the button via the Panels menu in the top bar.");
+    visual_tools.prompt("Please press next in the RVizVisualToolsGui to continue. Make sure to add the button via the Panels menu in the top bar.");
 
   }
 
@@ -1031,15 +963,44 @@ int main(int argc, char** argv) {
   display_trajectory.trajectory.push_back(bestResponse.trajectory);
   display_publisher.publish(display_trajectory);
 
-  avgTime = avgTime/(max_Iter-numSeedFails);
-  avgSeedTime = avgSeedTime/(max_Iter-numSeedFails);
-  avgShortcutCost = avgShortcutCost/(max_Iter-numSeedFails);
-  avgSeedCost = avgSeedCost/(max_Iter-numSeedFails);
+  avgTime = avgTime/(max_Iter-(numSeedFails+numWeirdSeeds));
+  avgSeedTime = avgSeedTime/(max_Iter-(numSeedFails+numWeirdSeeds));
+  avgShortcutCost = avgShortcutCost/(max_Iter-(numSeedFails+numWeirdSeeds));
+  avgSeedCost = avgSeedCost/(max_Iter-(numSeedFails+numWeirdSeeds));
   ROS_INFO_STREAM("Average BFMT* Time :: " +std::to_string(avgSeedTime));
   ROS_INFO_STREAM("Average BFMT*+Shortcut Time :: " +std::to_string(avgTime));
   ROS_INFO_STREAM("Number of SEED failures :: " +std::to_string(numSeedFails));
+  ROS_INFO_STREAM("Number of Weird Seeds :: " +std::to_string(numWeirdSeeds));
   ROS_INFO_STREAM("Average BFMT* Cost :: " +std::to_string(avgSeedCost));
   ROS_INFO_STREAM("Average BFMT*+Shortcut Cost :: " + std::to_string(avgShortcutCost));
+
+
+
+  // UNCOMMENT FOLLOWING CODE IF YOU WISH TO SAVE THE FMT TRAJECTORY TO A FILE. DON't
+  // FORGET TO CHANGE THE PATH DIRECTORY. Time parameterization not saved.
+  // ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  std::string path = "/home/tariq/Documents/camera_navigation_records.txt";
+  std::ofstream outputFile;
+  outputFile.open(path,std::ios::app);
+
+  outputFile << "*********************************\n";
+  outputFile << shortcutMethod.c_str()<< std::endl;
+  outputFile << "*********************************\n";
+
+  outputFile << "Seed Planning Time (s) :: \n" <<avgSeedTime<<std::endl;
+  outputFile << "Seed Cost :: \n" << avgSeedCost<<std::endl;
+  outputFile << "Number of Failures :: \n"<<numSeedFails<<std::endl<<std::endl;
+
+  outputFile << "Seed+Shortcut Planning Time (s) :: \n" <<avgTime<<std::endl;
+  outputFile << "Seed+Shortcut Cost :: \n" << avgShortcutCost<<std::endl;
+  outputFile << "Number of Failures :: \n"<<numSeedFails<<std::endl;
+
+  outputFile << std::endl<<std::endl;
+  outputFile.close();
+  ROS_INFO_STREAM("Finished creating log file");
+
+
+// } //end gtts
 
 }
 
@@ -1142,7 +1103,7 @@ static void visualizePlot(trajectory_msgs::JointTrajectory *joint_trajectory, ro
   */
 
 
-static void addObstacles(planning_scene::PlanningScenePtr planning_scene, ros::Publisher *planning_scene_diff_publisher, moveit_msgs::PlanningScene *planning_scene_msg, std::string environment, ros::NodeHandle &node_handle)
+static void addObstacles(planning_scene::PlanningScenePtr planning_scene, ros::Publisher *planning_scene_diff_publisher, moveit_msgs::PlanningScene *planning_scene_msg, std::string environment, ros::Publisher &vis_pub)
 {
   if(environment == "satellite")
   {
@@ -1151,7 +1112,14 @@ static void addObstacles(planning_scene::PlanningScenePtr planning_scene, ros::P
     // Eigen::Vector3d vector_scale;
     // vector_scale<<scale,scale,scale;
 
-    std::string file_loc = "package://motoman_sia20d_moveit_updated/src/satellite_mock_up_scaled.dae";
+
+    /*
+  
+
+        NOTE: MARKER VISUALIZATION PROBLEMS BASED ON LONG START UP. MAYBE WAIT A BIT?
+    */
+
+    std::string file_loc = "package://motoman_sia20d_moveit_updated/src/satellite_collision.dae";//"package://motoman_sia20d_moveit_updated/src/satellite_mock_up_scaled.dae";
 
     moveit_msgs::CollisionObject satellite;
     satellite.id="satellite";
@@ -1167,8 +1135,8 @@ static void addObstacles(planning_scene::PlanningScenePtr planning_scene, ros::P
     // node_handle.getParam("satY",satellite.mesh_poses[0].position.y);
     // node_handle.getParam("satZ",satellite.mesh_poses[0].position.z);
     satellite.mesh_poses[0].position.x = 0.20;
-    satellite.mesh_poses[0].position.y = 0.38;
-    satellite.mesh_poses[0].position.z = -0.3;
+    satellite.mesh_poses[0].position.y = 0.45;//0.38;
+    satellite.mesh_poses[0].position.z = -0.2;
     // node_handle.getParam("orW",satellite.mesh_poses[0].orientation.w);
     // node_handle.getParam("orX",satellite.mesh_poses[0].orientation.x);
     // node_handle.getParam("orY",satellite.mesh_poses[0].orientation.y);
@@ -1193,26 +1161,82 @@ static void addObstacles(planning_scene::PlanningScenePtr planning_scene, ros::P
     marker.scale.y=1;
     marker.scale.z=1;
     marker.color.a = 1.0;
-    marker.color.r = 0.0;
-    marker.color.b= 1.0;
-    marker.color.g = 0.5;
+    marker.color.r = 0.5;
+    marker.color.b= 0.0;
+    marker.color.g = 1.0;
 
-    marker.mesh_resource = file_loc;
-    ros::Publisher vis_pub = node_handle.advertise<visualization_msgs::Marker>("visualization_marker",0);
-    while(vis_pub.getNumSubscribers() < 1)
-    {
-      std::cout<<"Waiting for Marker to connect to /camera_navigation/visualization_marker"<<std::endl;
-      ros::Duration(0.5).sleep();
-    }
+    marker.mesh_resource = "package://motoman_sia20d_moveit_updated/src/satellite_mock_up_scaled.dae";
+
     planning_scene->processCollisionObjectMsg(satellite);
     
 
     //For some reason, RVIZ has trouble taking meshes from planning_scene_msg
-    //vis_pub.publish(marker);
-    planning_scene_msg->world.collision_objects.push_back(satellite);
+    vis_pub.publish(marker);
+    //planning_scene_msg->world.collision_objects.push_back(satellite);
 
 
   }
+
+
+  if(environment == "floating")
+  {
+    std::string file_loc = "package://motoman_sia20d_moveit_updated/src/floating_scaled.dae";
+
+    moveit_msgs::CollisionObject maze;
+    maze.id="floating";
+    shapes::Mesh* mesh = shapes::createMeshFromResource(file_loc);
+    shape_msgs::Mesh co_mesh;
+    shapes::ShapeMsg co_mesh_msg;
+    shapes::constructMsgFromShape(mesh,co_mesh_msg);
+    co_mesh = boost::get<shape_msgs::Mesh>(co_mesh_msg);
+    maze.meshes.resize(1);
+    maze.meshes[0] = co_mesh;
+    maze.mesh_poses.resize(1);
+
+    maze.mesh_poses[0].position.x = 0.3;
+    maze.mesh_poses[0].position.y = 0.0;
+    maze.mesh_poses[0].position.z = 0.75;
+    maze.mesh_poses[0].orientation.w = 1.0;
+    maze.mesh_poses[0].orientation.x = 0.0;
+    maze.mesh_poses[0].orientation.y = 0.0;
+    maze.mesh_poses[0].orientation.z = 0.0;
+    maze.id="floating";
+    maze.header.frame_id = "base_link";
+
+    visualization_msgs::Marker marker;
+    marker.header.frame_id = maze.header.frame_id;
+    marker.header.stamp = ros::Time::now();
+    marker.ns=maze.id;
+    marker.id = 20; //ARBITRARY NUMBER
+    marker.action = visualization_msgs::Marker::ADD;
+    marker.type=visualization_msgs::Marker::MESH_RESOURCE;
+    marker.pose = maze.mesh_poses[0];
+    marker.scale.x=1;
+    marker.scale.y=1;
+    marker.scale.z=1;
+    marker.color.a = 1.0;
+    marker.color.r = 0.5;
+    marker.color.b= 0.0;
+    marker.color.g = 1.0;
+
+    marker.mesh_resource = "package://motoman_sia20d_moveit_updated/src/floating_visual.dae";
+    // ros::Publisher vis_pub = node_handle.advertise<visualization_msgs::Marker>("visualization_marker",0);
+    // while(vis_pub.getNumSubscribers() < 1)
+    // {
+    //   std::cout<<"Waiting for Marker to connect to /camera_navigation/visualization_marker"<<std::endl;
+    //   ros::Duration(0.5).sleep();
+    // }
+
+    planning_scene->processCollisionObjectMsg(maze);
+    
+
+    //For some reason, RVIZ has trouble taking meshes from planning_scene_msg
+    vis_pub.publish(marker);
+    //planning_scene_msg->world.collision_objects.push_back(maze);
+
+  }
+
+
   if(environment == "box")
   {
     //SQUARE BOX
