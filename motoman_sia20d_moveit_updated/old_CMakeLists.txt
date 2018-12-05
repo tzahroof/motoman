@@ -5,6 +5,12 @@ add_compile_options(-std=c++11)
 
 find_package(catkin REQUIRED)
 
+catkin_package()
+
+install(DIRECTORY launch DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}
+  PATTERN "setup_assistant.launch" EXCLUDE)
+install(DIRECTORY config DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION})
+
 find_package(Eigen3 REQUIRED)
 
 # Eigen 3.2 (Wily) only provides EIGEN3_INCLUDE_DIR, not EIGEN3_INCLUDE_DIRS
@@ -30,17 +36,9 @@ find_package(Boost REQUIRED system filesystem date_time thread)
 #added for messages
 add_message_files(
   FILES
-  trajPlot.msg
-  trajPlotPoint.msg
-  trajPlotPointInfo.msg
+  Trajectory_Viewer_Msg.msg
 )
-generate_messages(
-  DEPENDENCIES
-  std_msgs
-  geometry_msgs
-  moveit_msgs
-)
-#end message addition
+generate_messages()
 
 catkin_package(
   LIBRARIES
@@ -59,9 +57,7 @@ catkin_package(
     EIGEN3
 )
 
-install(DIRECTORY launch DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}
-  PATTERN "setup_assistant.launch" EXCLUDE)
-install(DIRECTORY config DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION})
+
 
 
 include_directories(SYSTEM ${THIS_PACKAGE_INCLUDE_DIRS} ${Boost_INCLUDE_DIR} ${EIGEN3_INCLUDE_DIRS})

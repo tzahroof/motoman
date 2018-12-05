@@ -52,6 +52,11 @@
   <run_depend>joy</run_depend>
 
 
+ <!-- For Trajectory_Viewer_msg -->
+  <build_depend>message_generation </build_depend>
+  <run_depend>message_runtime</run_depend>
+
+
 
 
 </package>

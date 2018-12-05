@@ -1,0 +1,21 @@
+Things to note:
+
+roslaunch motoman_sia20d_moveit_updated trajectory_viewer.launch  //this runs the code
+
+python trajViewer.py //reads the code to display as a contour graph
+OR
+rosrun motoman_sia20d_moveit_updated trajViewer.py
+
+
+
+THINGS TO DO:
+^^^^^^^^^^^^^
+
+- Add pose information to message to trajectoryViewerPlot
+- Check for collisions when doing inverse kinematics
+- Save trajectory to a file
+- View trajectory visualization in MoveIt!
+- Turn the Python code neater
+- Organize the file structure (i.e. move all the .dae and .obj files and fix camera_navigation and trajectory_viewer_main to edit image locations)
+- Ensure that the examples are interesting (double check launch file for proper start, end, and collision environment)
+- Comment code more thoroughly 

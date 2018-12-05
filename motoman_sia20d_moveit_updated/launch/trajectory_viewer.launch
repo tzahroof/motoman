@@ -1,0 +1,68 @@
+<launch>
+  <!-- Debug Info -->
+  <arg name="debug" default="false" />
+  <arg unless="$(arg debug)" name="launch_prefix" value="" />
+  <arg     if="$(arg debug)" name="launch_prefix" value="gdb --ex run --args" />
+
+  <include file="$(find motoman_sia20d_moveit_updated)/launch/planning_context.launch">
+    <arg name="load_robot_description" value="true"/>
+  </include>
+
+  <node pkg="tf" type="static_transform_publisher" name="virtual_joint_broadcaster_0" args="0 0 0 0 0 0 world base_footprint 100" />
+
+  <node name="joint_state_publisher" pkg="joint_state_publisher" type="joint_state_publisher">
+    <param name="/use_gui" value="true"/>
+  </node>
+
+  <node name="robot_state_publisher" pkg="robot_state_publisher" type="robot_state_publisher" respawn="true" output="screen" />
+
+  <include file="$(find motoman_sia20d_moveit_updated)/launch/moveit_rviz.launch">
+  </include>
+<!--
+<node name="trajViewer" pkg="motoman_sia20d_moveit_updated" type="trajViewer.py" output="screen">
+</node>
+-->
+
+<node name="trajectory_viewer_main" pkg="motoman_sia20d_moveit_updated" type="trajectory_viewer_main" respawn="false" launch-prefix="" output="screen">
+    <param name="numShortcutLoops" value="100" />
+    <param name="max_EdgeLength_Discretization" value="0.1" />
+    <param name="max_EdgeLength_Waypoint_Injection" value="0.2" />
+    <param name="sbp_plugin" value="ompl_interface/OMPLPlanner"/>
+    <param name="adaptive_repetitions" value="5" />
+
+
+    <param name="allowed_planning_time" value="22" />
+    <param name="max_Iter" value = "1" />
+    <param name="shortcut" value="Partial" />
+    <param name="environment" value="none" />
+
+    <!-- Global Vision Camera: 0.5, -1.0, 1.2 -->
+    <!-- Revised Satellite Global Vision Camera: 0.5, -3.0, 0.8 -->
+    <param name="useGlobalVisionConstraint" value="false" />
+    <param name="globPointToFocusX" value="0.5" />
+    <param name="globPointToFocusY" value="-3.0" />
+    <param name="globPointToFocusZ" value="0.8" />
+	
+    <!-- Vision Target satellite: 2.0, -0.3, 0.95 -->
+    <!-- Vision Target floating: 1.6, -0.3, 0.3 -->
+    <param name="useVisionConstraint" value="false" />
+    <param name="pointToFocusX" value="2.0" />
+    <param name="pointToFocusY" value="-0.3" />
+    <param name="pointToFocusZ" value="0.95" />
+
+    <!-- Satellite Testing Values -->
+    <param name="satX" value="0.5" />
+    <param name="satY" value="0.76" />
+    <param name="satZ" value="-0.3" />
+    <param name="orW" value="1.0" />
+    <param name="orX" value="0.0" />
+    <param name="orY" value = "0.0" />
+    <param name="orZ" value= "0.0" />
+
+
+    <rosparam command="load" file="$(find motoman_sia20d_moveit_updated)/config/kinematics.yaml"/>
+    <rosparam command="load" file="$(find motoman_sia20d_moveit_updated)/config/ompl_planning.yaml"/>
+  </node>
+
+</launch>
+
