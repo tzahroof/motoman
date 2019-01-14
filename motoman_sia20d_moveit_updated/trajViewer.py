@@ -115,8 +115,8 @@ def is_number(s):
 def receive_values_from_gui():
 	"""Gets and prints the content of the entry"""
 	if(is_number(angle_value.get()) and is_number(point_value.get())):
-		newTrajectoryPoint = float(point_value.get())
-		newAngleValue = int(angle_value.get())
+		newTrajectoryPoint = int(point_value.get())
+		newAngleValue = float(angle_value.get())
 
 		X_scat = gp.X_scat
 		Y_scat = gp.Y_scat
